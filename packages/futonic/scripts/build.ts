@@ -7,7 +7,6 @@ await Bun.build({
 	entrypoints: [
 		"src/index.ts",
 		"src/client/index.ts",
-		"src/router/adapters/next.ts",
 		"src/cli/index.ts",
 	],
 	outdir: "dist",

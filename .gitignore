@@ -3,3 +3,6 @@ dist/
 *.tsbuildinfo
 .env
 .env.*
+*.db
+*.db-shm
+*.db-wal

@@ -1,68 +1,14 @@
 {
-  "name": "futonic",
-  "version": "0.1.0",
-  "description": "Embed API routes and database tables into any host application",
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
-    "./client": {
-      "import": "./dist/client/index.js",
-      "types": "./dist/client/index.d.ts"
-    },
-    "./next": {
-      "import": "./dist/router/adapters/next.js",
-      "types": "./dist/router/adapters/next.d.ts"
-    },
-    "./cli": {
-      "import": "./dist/cli/index.js",
-      "types": "./dist/cli/index.d.ts"
-    }
-  },
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
   "scripts": {
-    "build": "bun run scripts/build.ts",
-    "dev": "bun --watch src/index.ts",
-    "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "lint": "biome check src/",
-    "format": "biome format --write src/"
-  },
-  "dependencies": {
-    "better-call": "^1.0.4",
-    "kysely": "^0.27.6",
-    "zod": "^4.3.6"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/bun": "latest",
-    "better-sqlite3": "^11.0.0",
-    "tsx": "^4.21.0",
-    "typescript": "^5.7.0"
-  },
-  "optionalDependencies": {
-    "@mrleebo/prisma-ast": "^0.12.0"
-  },
-  "peerDependencies": {
-    "pg": ">=8.0.0",
-    "mysql2": ">=3.0.0",
-    "better-sqlite3": ">=9.0.0"
-  },
-  "peerDependenciesMeta": {
-    "pg": {
-      "optional": true
-    },
-    "mysql2": {
-      "optional": true
-    },
-    "better-sqlite3": {
-      "optional": true
-    }
-  },
-  "files": ["dist"],
-  "license": "MIT"
+    "build": "bun run --cwd packages/futonic build",
+    "test": "bun run --filter futonic test && bun run --filter host-hono test",
+    "typecheck": "bun run --cwd packages/futonic typecheck",
+    "lint": "bun run --cwd packages/futonic lint",
+    "format": "bun run --cwd packages/futonic format"
+  }
 }
