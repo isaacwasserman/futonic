@@ -4,6 +4,36 @@
   "workspaces": {
     "": {
       "name": "futonic",
+    },
+    "examples/host-hono": {
+      "name": "host-hono",
+      "version": "0.0.1",
+      "dependencies": {
+        "futonic": "workspace:*",
+        "hono": "^4.7.0",
+        "service-billing": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.7.0",
+      },
+    },
+    "examples/service-billing": {
+      "name": "service-billing",
+      "version": "0.0.1",
+      "dependencies": {
+        "better-call": "^1.0.4",
+        "futonic": "workspace:*",
+        "zod": "^4.3.6",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5.7.0",
+      },
+    },
+    "packages/futonic": {
+      "name": "futonic",
+      "version": "0.1.0",
       "dependencies": {
         "better-call": "^1.0.4",
         "kysely": "^0.27.6",
@@ -14,6 +44,7 @@
         "@types/better-sqlite3": "^7.6.13",
         "@types/bun": "latest",
         "better-sqlite3": "^11.0.0",
+        "hono": "^4.7.0",
         "tsx": "^4.21.0",
         "typescript": "^5.7.0",
       },
@@ -22,11 +53,13 @@
       },
       "peerDependencies": {
         "better-sqlite3": ">=9.0.0",
+        "hono": ">=4.0.0",
         "mysql2": ">=3.0.0",
         "pg": ">=8.0.0",
       },
       "optionalPeers": [
         "better-sqlite3",
+        "hono",
         "mysql2",
         "pg",
       ],
@@ -161,9 +194,15 @@
 
     "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
 
+    "futonic": ["futonic@workspace:packages/futonic"],
+
     "get-tsconfig": ["get-tsconfig@4.13.7", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-7tN6rFgBlMgpBML5j8typ92BKFi2sFQvIdpAqLA2beia5avZDrMs0FLZiM5etShWq5irVyGcGMEA1jcDaK7A/Q=="],
 
     "github-from-package": ["github-from-package@0.0.0", "", {}, "sha512-SyHy3T1v2NUXn29OsWdxmK6RwHD+vkj3v8en8AOBZ1wBQ/hCAQ5bAQTD02kW4W9tUp/3Qh6J8r9EvntiyCmOOw=="],
+
+    "hono": ["hono@4.12.12", "", {}, "sha512-p1JfQMKaceuCbpJKAPKVqyqviZdS0eUxH9v82oWo1kb9xjQ5wA6iP3FNVAPDFlz5/p7d45lO+BpSk1tuSZMF4Q=="],
+
+    "host-hono": ["host-hono@workspace:examples/host-hono"],
 
     "ieee754": ["ieee754@1.2.1", "", {}, "sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA=="],
 
@@ -206,6 +245,8 @@
     "safe-buffer": ["safe-buffer@5.2.1", "", {}, "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ=="],
 
     "semver": ["semver@7.7.4", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-vFKC2IEtQnVhpT78h1Yp8wzwrf8CM+MzKMHGJZfBtzhZNycRFnXsHk6E5TxIkkMsgNS7mdX3AGB7x2QM2di4lA=="],
+
+    "service-billing": ["service-billing@workspace:examples/service-billing"],
 
     "set-cookie-parser": ["set-cookie-parser@3.1.0", "", {}, "sha512-kjnC1DXBHcxaOaOXBHBeRtltsDG2nUiUni+jP92M9gYdW12rsmx92UsfpH7o5tDRs7I1ZZPSQJQGv3UaRfCiuw=="],
 

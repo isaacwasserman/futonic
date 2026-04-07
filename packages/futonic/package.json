@@ -1,0 +1,77 @@
+{
+  "name": "futonic",
+  "version": "0.1.0",
+  "description": "Embed API routes and database tables into any host application",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client/index.js",
+      "types": "./dist/client/index.d.ts"
+    },
+    "./next": {
+      "import": "./dist/router/adapters/next.js",
+      "types": "./dist/router/adapters/next.d.ts"
+    },
+    "./hono": {
+      "import": "./dist/router/adapters/hono.js",
+      "types": "./dist/router/adapters/hono.d.ts"
+    },
+    "./cli": {
+      "import": "./dist/cli/index.js",
+      "types": "./dist/cli/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "format": "biome format --write src/"
+  },
+  "dependencies": {
+    "better-call": "^1.0.4",
+    "kysely": "^0.27.6",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/bun": "latest",
+    "better-sqlite3": "^11.0.0",
+    "hono": "^4.7.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  },
+  "optionalDependencies": {
+    "@mrleebo/prisma-ast": "^0.12.0"
+  },
+  "peerDependencies": {
+    "pg": ">=8.0.0",
+    "mysql2": ">=3.0.0",
+    "better-sqlite3": ">=9.0.0",
+    "hono": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    }
+  },
+  "files": ["dist"],
+  "license": "MIT"
+}
