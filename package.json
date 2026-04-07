@@ -17,10 +17,11 @@
     "./next": {
       "import": "./dist/router/adapters/next.js",
       "types": "./dist/router/adapters/next.d.ts"
+    },
+    "./cli": {
+      "import": "./dist/cli/index.js",
+      "types": "./dist/cli/index.d.ts"
     }
-  },
-  "bin": {
-    "futonic": "./dist/cli/index.js"
   },
   "scripts": {
     "build": "bun run scripts/build.ts",
