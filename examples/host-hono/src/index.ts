@@ -12,7 +12,6 @@ import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { Database } from "bun:sqlite";
 import { createHost } from "futonic";
-import { mountRouter } from "futonic/hono";
 import { billing, createBillingRouter } from "service-billing";
 import { SQLITE_UP } from "service-billing/src/migrations";
 
@@ -91,12 +90,12 @@ app.get("/", (c) => {
 	});
 });
 
-// Mount the billing service router
+// Mount the billing service router — router.handler uses standard Request/Response
 const billingRouter = createBillingRouter(
 	"/api/billing",
 	mounted.serviceContext!,
 );
-mountRouter(app, "/api/billing/*", billingRouter);
+app.all("/api/billing/*", (c) => billingRouter.handler(c.req.raw));
 
 // ---------------------------------------------------------------------------
 // Start server

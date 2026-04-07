@@ -7,8 +7,6 @@ await Bun.build({
 	entrypoints: [
 		"src/index.ts",
 		"src/client/index.ts",
-		"src/router/adapters/next.ts",
-		"src/router/adapters/hono.ts",
 		"src/cli/index.ts",
 	],
 	outdir: "dist",
@@ -18,7 +16,6 @@ await Bun.build({
 	external: [
 		"better-call",
 		"kysely",
-		"hono",
 		"pg",
 		"mysql2",
 		"better-sqlite3",

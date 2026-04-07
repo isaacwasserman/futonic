@@ -44,7 +44,6 @@
         "@types/better-sqlite3": "^7.6.13",
         "@types/bun": "latest",
         "better-sqlite3": "^11.0.0",
-        "hono": "^4.7.0",
         "tsx": "^4.21.0",
         "typescript": "^5.7.0",
       },
@@ -53,13 +52,11 @@
       },
       "peerDependencies": {
         "better-sqlite3": ">=9.0.0",
-        "hono": ">=4.0.0",
         "mysql2": ">=3.0.0",
         "pg": ">=8.0.0",
       },
       "optionalPeers": [
         "better-sqlite3",
-        "hono",
         "mysql2",
         "pg",
       ],

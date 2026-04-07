@@ -14,14 +14,6 @@
       "import": "./dist/client/index.js",
       "types": "./dist/client/index.d.ts"
     },
-    "./next": {
-      "import": "./dist/router/adapters/next.js",
-      "types": "./dist/router/adapters/next.d.ts"
-    },
-    "./hono": {
-      "import": "./dist/router/adapters/hono.js",
-      "types": "./dist/router/adapters/hono.d.ts"
-    },
     "./cli": {
       "import": "./dist/cli/index.js",
       "types": "./dist/cli/index.d.ts"
@@ -45,7 +37,6 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
     "better-sqlite3": "^11.0.0",
-    "hono": "^4.7.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0"
   },
@@ -55,8 +46,7 @@
   "peerDependencies": {
     "pg": ">=8.0.0",
     "mysql2": ">=3.0.0",
-    "better-sqlite3": ">=9.0.0",
-    "hono": ">=4.0.0"
+    "better-sqlite3": ">=9.0.0"
   },
   "peerDependenciesMeta": {
     "pg": {
@@ -66,9 +56,6 @@
       "optional": true
     },
     "better-sqlite3": {
-      "optional": true
-    },
-    "hono": {
       "optional": true
     }
   },
