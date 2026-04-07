@@ -1,35 +1,33 @@
 # futonic
 
-**Embed services into your app instead of deploying them next to it.**
+**A framework for building services that embed into host applications instead of deploying alongside them.**
 
 ## The problem
 
-You need auth. You need payments. You need observability. Each one comes as a container you deploy alongside your app. Now you're managing a fleet of services for an app that gets 200 requests a day.
-
-Your "microservices" aren't doing micro work — they're sitting idle, eating memory, and costing you money. You don't need horizontal scale. You need your stuff to work.
+There are plenty of services available as easy-to-deploy containers — auth servers, payment processors, observability tools. But for most applications, deploying multiple containers (one for the main app plus one for each service) is a waste. An auth server, a payment webhook handler, and an observability stack don't each need their own process. They could share compute and a database without any meaningful noisy-neighbor issues — because let's be honest, most apps these days are just wrappers around heavier services anyway.
 
 ## The idea
 
 Futonic is heavily inspired by [better-auth](https://github.com/better-auth/better-auth)'s service embedding paradigm — the insight that many services don't need their own process, their own deployment, or even their own database. They just need a place to crash.
 
-Futonic lets developers create **embeddable services** that crash on a host application's futon. They share your compute. They share your database. They wake up when needed and stay out of the way when they're not.
+Futonic is a framework for building **embeddable services** that crash on a host application's futon. They share the host's compute. They share the host's database. They wake up when needed and stay out of the way when they're not.
 
-No separate containers. No extra Dockerfiles. No internal networking. Just services that live inside your app.
+No separate containers. No extra Dockerfiles. No internal networking. Just services that live inside the host app — and a great DX for building them.
 
-## Why this makes sense
+## Why build embeddable services
 
-**For small-scale apps and indie projects:**
-Most apps aren't Twitter. They're tools, SaaS products, and side projects where every dollar of infrastructure counts. Running a Postgres instance, an auth server, a payment webhook handler, and an observability stack as separate containers is overkill when your app and all its services could comfortably share a single process and a single database.
+**Your users save money:**
+Most apps aren't mega-scale. They're tools, SaaS products, and indie projects where every dollar of infrastructure counts. When your service embeds directly into the host, your users don't need to pay for another container sitting idle 99% of the time.
 
-**For local development:**
-No more `docker-compose up` with 6 services just to work on a feature. No more debugging why the auth container can't talk to the payments container on your laptop. Every service runs in-process. Switch branches, switch worktrees — everything just works.
+**Your users get a better dev experience:**
+No more `docker-compose up` with 6 services just to work on a feature. No more debugging why the auth container can't talk to the payments container on a laptop. Embedded services run in-process. Switch branches, switch worktrees — everything just works.
 
-**For keeping things simple:**
-Fewer moving parts means fewer things that break at 2am. One deploy. One database. One set of logs. You can always decompose later if you outgrow it — but most apps never will.
+**Simplicity sells:**
+Fewer moving parts means fewer things that break at 2am. One deploy. One database. One set of logs. Developers can always decompose later if they outgrow it — but most apps never will. The easier your service is to adopt, the more people will use it.
 
 ## How it works
 
-A futonic service is a bundle of **API endpoints** and **database tables** that plugs into any host application.
+You define a service as a bundle of **API endpoints** and **database tables**. Futonic handles the embedding.
 
 ```typescript
 import { createService, createEndpoint } from "futonic";
@@ -62,14 +60,14 @@ const billing = createService({
 });
 ```
 
-The host application mounts it:
+Your users mount it in a few lines:
 
 ```typescript
 import { createHost } from "futonic";
 import { billing } from "@acme/billing";
 
 const host = createHost({
-  database: pool,  // Your existing pg.Pool, mysql2 pool, or sqlite instance
+  database: pool,  // Their existing pg.Pool, mysql2 pool, or sqlite instance
   baseURL: "http://localhost:3000",
   services: [
     billing({ mount: "/api/billing" }),
@@ -79,17 +77,16 @@ const host = createHost({
 await host.init();
 ```
 
-That's it. The billing service now handles requests at `/api/billing/*` and stores data in your database under prefixed tables (`billing_invoices`, `billing_customers`, etc.) — no collisions, no conflicts.
+That's it. The billing service handles requests at `/api/billing/*` and stores data in the host's database under prefixed tables (`billing_invoices`, `billing_customers`, etc.) — no collisions, no conflicts.
 
 ## Features
 
 ### Web standard endpoints
 
-Endpoints are just functions that take a `Request` and return a `Response`. Return JSON, HTML, streams, redirects — anything the web platform supports. Adapters for [Next.js](https://nextjs.org) are included, with more on the way.
+Define endpoints as functions that return any web standard `Response` — JSON, HTML, streams, redirects, file downloads. No proprietary abstractions. Framework adapters (starting with [Next.js](https://nextjs.org)) let host developers wire up your service in one line:
 
 ```typescript
-// Works with Next.js App Router
-// app/api/billing/[...path]/route.ts
+// Host's app/api/billing/[...path]/route.ts
 import { toNextJsHandler } from "futonic/next";
 
 export const { GET, POST, PUT, DELETE, PATCH } = toNextJsHandler(billingRouter);
@@ -97,15 +94,15 @@ export const { GET, POST, PUT, DELETE, PATCH } = toNextJsHandler(billingRouter);
 
 ### Prefixed database tables
 
-Each service's tables are automatically prefixed with its service ID. A `billing` service with an `invoices` table gets `billing_invoices` in the actual database. Services interact with their tables using the unprefixed name — the scoping is transparent.
+Your service's tables are automatically prefixed with its ID. A `billing` service with an `invoices` table becomes `billing_invoices` in the actual database — no collisions with the host or other services. You interact with tables using their unprefixed names; the scoping is transparent.
 
 ```typescript
-// Inside the service, you just write:
+// You just write:
 await ctx.db.invoices.findMany({ where: [{ field: "status", value: "paid" }] });
 // Futonic queries `billing_invoices` under the hood
 ```
 
-Schema generation is built in. Service authors ship a CLI that host developers use to generate the right migration files for their ORM of choice:
+Ship a CLI so your users can generate migration files for their ORM of choice:
 
 ```bash
 npx @acme/billing generate --orm=drizzle --provider=pg --out=schema.ts
@@ -115,15 +112,15 @@ npx @acme/billing generate --orm=kysely --provider=sqlite
 
 ### Type safety end to end
 
-Service schemas, endpoint inputs, endpoint outputs, and client calls are all fully typed. Define your schema once and TypeScript carries it through to the client.
+Your service's schema, endpoint inputs, endpoint outputs, and client calls are all fully typed. Define your schema once and TypeScript carries it through to whoever consumes it.
 
 ### Skip networking on the backend
 
-When your backend code interacts with an embedded service, there's no HTTP round-trip. The service runs in the same process, shares the same database connection pool, and returns results directly. Zero serialization overhead.
+When the host's backend code calls your service, there's no HTTP round-trip. Your service runs in the same process, shares the same database connection pool, and returns results directly. Zero serialization overhead.
 
 ### Type-safe RPC from the frontend
 
-Consume any embedded service from your frontend with a fully typed client:
+Host developers consume your service from their frontend with a fully typed client:
 
 ```typescript
 import { createClient } from "futonic/client";
@@ -142,14 +139,14 @@ const { data: invoice } = await billing.createInvoice({
 
 ### Return any web standard response
 
-Endpoints aren't limited to JSON. Return full HTML pages for embedded UIs, server-sent event streams for real-time updates, file downloads, redirects — whatever `Response` supports.
+Your endpoints aren't limited to JSON. Serve full HTML pages for embedded UIs, server-sent event streams for real-time updates, file downloads, redirects — whatever `Response` supports. Build an entire admin dashboard that lives inside the host app.
 
-## Things you might embed
+## Things you could build
 
-- **Auth** — User management, sessions, OAuth flows, and permissions. Like better-auth, but as a service you embed rather than a library you import.
-- **Payments** — Webhook handlers, invoice management, subscription state. Keep your Stripe integration contained and reusable across projects.
-- **Observability** — Ingest traces via an embedded API, store them in your database, visualize them through an embedded UI. No Jaeger deployment required.
-- **Feature flags** — A simple flag service with an admin UI, backed by your existing database.
+- **Auth service** — User management, sessions, OAuth flows, and permissions. Like better-auth, but packaged as an embeddable service.
+- **Payment service** — Webhook handlers, invoice management, subscription state. A reusable Stripe integration that anyone can drop into their app.
+- **Observability service** — An API for ingesting traces, database tables for storing them, and an embedded UI for visualizing them. Jaeger without the deployment.
+- **Feature flags** — A flag service with an admin UI, backed by the host's existing database.
 - **CMS** — Content management endpoints with an embedded editor interface.
 - **Notifications** — Email/push queue management with status tracking and retry logic.
 
@@ -161,7 +158,7 @@ Futonic auto-detects your database driver and works with:
 - **MySQL** via `mysql2`
 - **SQLite** via `better-sqlite3` or Bun's built-in `bun:sqlite`
 
-Pass your existing connection — no extra configuration needed.
+Your service works with whatever database the host is already running — no extra configuration on your end.
 
 ## License
 
