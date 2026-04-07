@@ -22,12 +22,8 @@ export type {
 	PrefixedTable,
 } from "./db/schema";
 export { getServiceTables, prefixTableName } from "./db/schema";
-export type { InternalAdapter, TableAdapter, FindManyOptions } from "./db/internal-adapter";
+export type { InternalAdapter, TableAdapter, FindManyOptions, Where } from "./db/internal-adapter";
 
 // Router
 export { createServiceEndpoint } from "./router/endpoint";
 export { createServiceMiddleware } from "./router/middleware";
-
-// Standard Schema
-export { toZodCompat } from "./standard-schema";
-export type { StandardSchema } from "./standard-schema";

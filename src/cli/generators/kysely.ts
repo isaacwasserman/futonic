@@ -1,32 +1,58 @@
-import type { FieldDefinition, PrefixedTable } from "../../db/schema";
-
 /**
- * Generates raw SQL DDL from the collected service tables.
- * Forked from better-auth's CLI generator pattern.
+ * Raw SQL DDL generator for Kysely / plain SQL migrations.
+ *
+ * better-auth's kysely generator delegates to `getMigrations()` which
+ * compiles DDL from their internal schema. We do the same thing here,
+ * generating CREATE TABLE statements from our PrefixedTable IR.
+ *
+ * Forked approach from better-auth `packages/cli/src/generators/kysely.ts` (MIT).
  */
-export async function generateKyselySchema(outPath?: string) {
-	const output = outPath ?? "futonic-schema.sql";
-	console.log(`[futonic] SQL schema generation → ${output}`);
-	console.log("[futonic] Not yet implemented — requires host config loading");
-}
+
+import type { FieldDefinition, PrefixedTable } from "../../db/schema";
+import type { DatabaseProvider, SchemaGenerator } from "./types";
+
+export const generateKyselySchema: SchemaGenerator = async ({
+	tables,
+	provider,
+	file,
+}) => {
+	const statements: string[] = [];
+
+	for (const [, table] of tables) {
+		statements.push(tableToSQL(table, provider));
+	}
+
+	const code = statements.join("\n\n");
+
+	return {
+		code: code.trim() || "",
+		fileName:
+			file ||
+			`./futonic_migrations/${new Date().toISOString().replace(/:/g, "-")}.sql`,
+	};
+};
 
 /**
  * Converts a PrefixedTable to a CREATE TABLE SQL statement.
  */
-export function tableToSQL(table: PrefixedTable): string {
+export function tableToSQL(
+	table: PrefixedTable,
+	provider: DatabaseProvider = "pg",
+): string {
 	const columns: string[] = [];
 
 	for (const [fieldName, field] of Object.entries(table.fields)) {
-		columns.push(`\t${fieldName} ${fieldToSQLType(field)}`);
+		columns.push(`  ${fieldName} ${fieldToSQLType(field, provider)}`);
 	}
 
 	// Add foreign key constraints
 	for (const [fieldName, field] of Object.entries(table.fields)) {
 		if (field.references) {
 			const onDelete = field.references.onDelete ?? "restrict";
-			const action = onDelete === "set-null" ? "SET NULL" : onDelete.toUpperCase();
+			const action =
+				onDelete === "set-null" ? "SET NULL" : onDelete.toUpperCase();
 			columns.push(
-				`\tFOREIGN KEY (${fieldName}) REFERENCES ${field.references.model}(${field.references.field}) ON DELETE ${action}`,
+				`  FOREIGN KEY (${fieldName}) REFERENCES ${field.references.model}(${field.references.field}) ON DELETE ${action}`,
 			);
 		}
 	}
@@ -34,24 +60,37 @@ export function tableToSQL(table: PrefixedTable): string {
 	return `CREATE TABLE IF NOT EXISTS ${table.prefixedName} (\n${columns.join(",\n")}\n);`;
 }
 
-function fieldToSQLType(field: FieldDefinition): string {
+/**
+ * Maps a field definition to its SQL type string, varying by provider.
+ * Follows the same provider-aware mapping as the Drizzle generator.
+ */
+function fieldToSQLType(
+	field: FieldDefinition,
+	provider: DatabaseProvider,
+): string {
 	let type: string;
 
 	switch (field.type) {
 		case "string":
-			type = "TEXT";
+			if (provider === "mysql" && (field.unique || field.references)) {
+				type = "VARCHAR(255)";
+			} else {
+				type = "TEXT";
+			}
 			break;
 		case "number":
-			type = "INTEGER";
+			type = provider === "mysql" ? "INT" : "INTEGER";
 			break;
 		case "boolean":
-			type = "BOOLEAN";
+			type = provider === "sqlite" ? "INTEGER" : "BOOLEAN";
 			break;
 		case "date":
-			type = "TIMESTAMP";
+			type = provider === "sqlite" ? "INTEGER" : "TIMESTAMP";
 			break;
 		case "json":
-			type = "JSONB";
+			if (provider === "pg") type = "JSONB";
+			else if (provider === "mysql") type = "JSON";
+			else type = "TEXT";
 			break;
 		default:
 			type = "TEXT";
@@ -62,7 +101,11 @@ function fieldToSQLType(field: FieldDefinition): string {
 	if (field.required) parts.push("NOT NULL");
 	if (field.unique) parts.push("UNIQUE");
 	if (field.defaultValue !== undefined) {
-		parts.push(`DEFAULT ${JSON.stringify(field.defaultValue)}`);
+		if (typeof field.defaultValue === "string") {
+			parts.push(`DEFAULT '${field.defaultValue}'`);
+		} else {
+			parts.push(`DEFAULT ${field.defaultValue}`);
+		}
 	}
 
 	return parts.join(" ");
