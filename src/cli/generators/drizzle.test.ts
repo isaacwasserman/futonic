@@ -1,80 +1,90 @@
+/**
+ * Drizzle schema generator tests.
+ *
+ * Follows better-auth's pattern of snapshot-based testing
+ * (packages/cli/test/generate-all-db.test.ts) — generates schema output
+ * for each provider and compares against stored snapshots.
+ */
+
 import { describe, expect, test } from "bun:test";
 import type { PrefixedTable } from "../../db/schema";
 import { generateDrizzleSchema } from "./drizzle";
 
-describe("generateDrizzleSchema", () => {
-	const tables = new Map<string, PrefixedTable>([
-		[
-			"billing_invoices",
-			{
-				originalName: "invoices",
-				prefixedName: "billing_invoices",
-				serviceId: "billing",
-				fields: {
-					id: { type: "string", primaryKey: true, required: true },
-					amount: { type: "number", required: true },
-					status: {
-						type: "string",
-						enum: ["draft", "sent", "paid"],
-					},
-					metadata: { type: "json" },
-					created_at: { type: "date", required: true },
+// A representative schema with multiple field types, constraints, and references
+const tables = new Map<string, PrefixedTable>([
+	[
+		"billing_invoices",
+		{
+			originalName: "invoices",
+			prefixedName: "billing_invoices",
+			serviceId: "billing",
+			fields: {
+				id: { type: "string", primaryKey: true, required: true },
+				amount: { type: "number", required: true },
+				status: {
+					type: "string",
+					enum: ["draft", "sent", "paid"],
+				},
+				is_recurring: { type: "boolean" },
+				metadata: { type: "json" },
+				created_at: { type: "date", required: true },
+				user_id: {
+					type: "string",
+					required: true,
+					references: { model: "user", field: "id", onDelete: "cascade" },
 				},
 			},
-		],
-	]);
+		},
+	],
+	[
+		"billing_line_items",
+		{
+			originalName: "line_items",
+			prefixedName: "billing_line_items",
+			serviceId: "billing",
+			fields: {
+				id: { type: "string", primaryKey: true, required: true },
+				invoice_id: {
+					type: "string",
+					required: true,
+					references: {
+						model: "billing_invoices",
+						field: "id",
+						onDelete: "cascade",
+					},
+				},
+				description: { type: "string", required: true },
+				amount: { type: "number", required: true },
+				email: { type: "string", unique: true, required: true },
+			},
+		},
+	],
+]);
 
-	test("generates pg schema with correct imports", async () => {
+describe("generateDrizzleSchema", () => {
+	test("generates correct pg schema", async () => {
 		const result = await generateDrizzleSchema({
 			tables,
 			provider: "pg",
 		});
-
-		expect(result.code).toContain('from "drizzle-orm/pg-core"');
-		expect(result.code).toContain("pgTable");
-		expect(result.code).toContain("text");
-		expect(result.code).toContain("integer");
-		expect(result.code).toContain("jsonb");
-		expect(result.code).toContain("timestamp");
-		expect(result.code).toContain('export const billing_invoices = pgTable("billing_invoices"');
+		expect(result.code).toMatchSnapshot();
 		expect(result.fileName).toBe("./futonic-schema.ts");
 	});
 
-	test("generates sqlite schema", async () => {
+	test("generates correct mysql schema", async () => {
+		const result = await generateDrizzleSchema({
+			tables,
+			provider: "mysql",
+		});
+		expect(result.code).toMatchSnapshot();
+	});
+
+	test("generates correct sqlite schema", async () => {
 		const result = await generateDrizzleSchema({
 			tables,
 			provider: "sqlite",
 		});
-
-		expect(result.code).toContain('from "drizzle-orm/sqlite-core"');
-		expect(result.code).toContain("sqliteTable");
-		expect(result.code).toContain('mode: "json"');
-	});
-
-	test("generates mysql schema with varchar for unique fields", async () => {
-		const tablesWithUnique = new Map<string, PrefixedTable>([
-			[
-				"auth_users",
-				{
-					originalName: "users",
-					prefixedName: "auth_users",
-					serviceId: "auth",
-					fields: {
-						id: { type: "string", primaryKey: true, required: true },
-						email: { type: "string", unique: true, required: true },
-					},
-				},
-			],
-		]);
-
-		const result = await generateDrizzleSchema({
-			tables: tablesWithUnique,
-			provider: "mysql",
-		});
-
-		expect(result.code).toContain('from "drizzle-orm/mysql-core"');
-		expect(result.code).toContain("mysqlTable");
-		expect(result.code).toContain('varchar("email", { length: 255 })');
+		expect(result.code).toMatchSnapshot();
 	});
 
 	test("respects custom output path", async () => {
@@ -83,7 +93,14 @@ describe("generateDrizzleSchema", () => {
 			provider: "pg",
 			file: "./custom/schema.ts",
 		});
-
 		expect(result.fileName).toBe("./custom/schema.ts");
+	});
+
+	test("handles empty table set", async () => {
+		const result = await generateDrizzleSchema({
+			tables: new Map(),
+			provider: "pg",
+		});
+		expect(result.code).toMatchSnapshot();
 	});
 });
