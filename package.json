@@ -6,7 +6,7 @@
   ],
   "scripts": {
     "build": "bun run --cwd packages/futonic build",
-    "test": "bun run --cwd packages/futonic test",
+    "test": "bun run --filter futonic test && bun run --filter host-hono test",
     "typecheck": "bun run --cwd packages/futonic typecheck",
     "lint": "bun run --cwd packages/futonic lint",
     "format": "bun run --cwd packages/futonic format"
