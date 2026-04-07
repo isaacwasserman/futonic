@@ -1,0 +1,81 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`generateDrizzleSchema generates correct pg schema 1`] = `
+"import { pgTable, text, integer, boolean, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+
+export const billing_invoices = pgTable("billing_invoices", {
+  id: text("id").primaryKey().notNull(),
+  amount: integer("amount").notNull(),
+  status: text("status", { enum: ['draft', 'sent', 'paid'] }),
+  is_recurring: boolean("is_recurring"),
+  metadata: jsonb("metadata"),
+  created_at: timestamp("created_at").notNull(),
+  user_id: text("user_id").notNull().references(() => user.id, { onDelete: 'cascade' })
+});
+
+export const billing_line_items = pgTable("billing_line_items", {
+  id: text("id").primaryKey().notNull(),
+  invoice_id: text("invoice_id").notNull().references(() => billing_invoices.id, { onDelete: 'cascade' }),
+  description: text("description").notNull(),
+  amount: integer("amount").notNull(),
+  email: text("email").notNull().unique()
+}, (table) => [
+  uniqueIndex("billing_line_items_email_uidx").on(table.email),
+]);
+"
+`;
+
+exports[`generateDrizzleSchema generates correct mysql schema 1`] = `
+"import { mysqlTable, varchar, text, int, boolean, timestamp, json, mysqlEnum, uniqueIndex } from "drizzle-orm/mysql-core";
+
+export const billing_invoices = mysqlTable("billing_invoices", {
+  id: text("id").primaryKey().notNull(),
+  amount: int("amount").notNull(),
+  status: mysqlEnum("status", ['draft', 'sent', 'paid']),
+  is_recurring: boolean("is_recurring"),
+  metadata: json("metadata"),
+  created_at: timestamp("created_at", { fsp: 3 }).notNull(),
+  user_id: varchar("user_id", { length: 36 }).notNull().references(() => user.id, { onDelete: 'cascade' })
+});
+
+export const billing_line_items = mysqlTable("billing_line_items", {
+  id: text("id").primaryKey().notNull(),
+  invoice_id: varchar("invoice_id", { length: 36 }).notNull().references(() => billing_invoices.id, { onDelete: 'cascade' }),
+  description: text("description").notNull(),
+  amount: int("amount").notNull(),
+  email: varchar("email", { length: 255 }).notNull().unique()
+}, (table) => [
+  uniqueIndex("billing_line_items_email_uidx").on(table.email),
+]);
+"
+`;
+
+exports[`generateDrizzleSchema generates correct sqlite schema 1`] = `
+"import { sqliteTable, text, integer, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const billing_invoices = sqliteTable("billing_invoices", {
+  id: text("id").primaryKey().notNull(),
+  amount: integer("amount").notNull(),
+  status: text("status"),
+  is_recurring: integer("is_recurring", { mode: 'boolean' }),
+  metadata: text("metadata", { mode: "json" }),
+  created_at: integer("created_at", { mode: 'timestamp_ms' }).notNull(),
+  user_id: text("user_id").notNull().references(() => user.id, { onDelete: 'cascade' })
+});
+
+export const billing_line_items = sqliteTable("billing_line_items", {
+  id: text("id").primaryKey().notNull(),
+  invoice_id: text("invoice_id").notNull().references(() => billing_invoices.id, { onDelete: 'cascade' }),
+  description: text("description").notNull(),
+  amount: integer("amount").notNull(),
+  email: text("email").notNull().unique()
+}, (table) => [
+  uniqueIndex("billing_line_items_email_uidx").on(table.email),
+]);
+"
+`;
+
+exports[`generateDrizzleSchema handles empty table set 1`] = `
+"import { pgTable, text } from "drizzle-orm/pg-core";
+"
+`;

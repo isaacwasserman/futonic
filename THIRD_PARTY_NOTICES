@@ -1,0 +1,36 @@
+This file lists the third-party code included in this project and
+their license terms.
+
+================================================================================
+better-auth — https://github.com/better-auth/better-auth
+================================================================================
+
+The following files contain code forked and adapted from better-auth:
+
+  src/db/kysely-factory.ts          — dialect detection (from packages/kysely-adapter/src/dialect.ts)
+  src/db/internal-adapter.ts        — adapter method signatures (from packages/kysely-adapter/src/kysely-adapter.ts)
+  src/cli/generators/drizzle.ts     — Drizzle schema generator (from packages/cli/src/generators/drizzle.ts)
+  src/cli/generators/prisma.ts      — Prisma schema generator (from packages/cli/src/generators/prisma.ts)
+  src/cli/generators/kysely.ts      — SQL DDL generator (from packages/cli/src/generators/kysely.ts)
+  src/cli/generators/types.ts       — generator types (from packages/cli/src/generators/types.ts)
+
+The MIT License (MIT)
+Copyright (c) 2024 - present, Bereket Engida
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
