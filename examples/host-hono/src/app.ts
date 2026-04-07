@@ -25,7 +25,7 @@ export interface App {
  * statements. bun:sqlite doesn't set `stmt.reader`, so SELECT queries
  * return empty results without this wrapper.
  */
-function wrapBunSqlite(inner: Database) {
+export function wrapBunSqlite(inner: Database) {
 	return new Proxy(inner, {
 		get(target, prop) {
 			if (prop === "prepare") {
