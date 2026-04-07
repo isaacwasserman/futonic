@@ -10,10 +10,12 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { createEndpoint, createMiddleware, createRouter } from "better-call";
 import { createService } from "./core/service";
 import { createHost, type Host } from "./core/host";
 import type { ServiceContext } from "./core/context";
 import { createInternalAdapter } from "./db/internal-adapter";
+import { createServiceMiddleware } from "./router/middleware";
 import type { ServiceDBSchema } from "./db/schema";
 import { createTestDatabase, type TestDatabase } from "./test-utils";
 
@@ -950,5 +952,641 @@ describe("logger", () => {
 		expect(logs.some((l) => l.includes("hello"))).toBe(true);
 
 		await host.shutdown();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 10. Full HTTP stack: createHost → ServiceContext → middleware → router
+//
+// These prove that futonic's wiring actually delivers the right context
+// to the right endpoint at the right path through standard Request/Response.
+// ---------------------------------------------------------------------------
+
+describe("full HTTP wiring through createHost", () => {
+	let db: TestDatabase;
+
+	beforeEach(async () => {
+		db = await createTestDatabase();
+	});
+
+	afterEach(async () => {
+		await db.close();
+	});
+
+	test("endpoint receives correct ServiceContext via createHost wiring", async () => {
+		db.run(
+			"CREATE TABLE echo_items (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
+		);
+
+		const echoSchema = {
+			tables: {
+				items: {
+					fields: {
+						id: {
+							type: "string" as const,
+							primaryKey: true,
+							required: true,
+						},
+						name: { type: "string" as const, required: true },
+					},
+				},
+			},
+		} satisfies ServiceDBSchema;
+
+		const svc = createService({
+			id: "echo",
+			version: "1.0.0",
+			dependencies: { database: true },
+			dbSchema: echoSchema,
+			endpoints: {},
+		});
+
+		const mounted = svc({
+			mount: "/api/echo",
+			config: { secret: "abc" },
+		});
+
+		const host = createHost({
+			database: db.raw,
+			baseURL: "http://testhost:9999",
+			services: [mounted],
+		});
+
+		await host.init();
+
+		const ctx = mounted.serviceContext!;
+		const middleware = createServiceMiddleware(ctx);
+
+		// Endpoint that echoes the ServiceContext it received
+		const echoEndpoint = createEndpoint(
+			"/context",
+			{ method: "GET", use: [middleware] },
+			async (handlerCtx) => {
+				const svcCtx = (handlerCtx as any).context
+					.serviceCtx as ServiceContext;
+				return {
+					mountPath: svcCtx.hostInfo.mountPath,
+					baseURL: svcCtx.hostInfo.baseURL,
+					config: svcCtx.config,
+					hasDb: svcCtx.db !== undefined,
+				};
+			},
+		);
+
+		const router = createRouter(
+			{ echoEndpoint },
+			{ basePath: "/api/echo" },
+		);
+
+		const res = await router.handler(
+			new Request("http://testhost:9999/api/echo/context"),
+		);
+
+		expect(res.status).toBe(200);
+		const data = await res.json();
+		expect(data.mountPath).toBe("/api/echo");
+		expect(data.baseURL).toBe("http://testhost:9999");
+		expect(data.config).toEqual({ secret: "abc" });
+		expect(data.hasDb).toBe(true);
+
+		await host.shutdown();
+	});
+
+	test("endpoint can CRUD through the full host-wired adapter", async () => {
+		db.run(
+			"CREATE TABLE store_items (id TEXT PRIMARY KEY, name TEXT NOT NULL, value INTEGER)",
+		);
+
+		const svc = createService({
+			id: "store",
+			version: "1.0.0",
+			dependencies: { database: true },
+			dbSchema: simpleSchema,
+			endpoints: {},
+		});
+
+		const mounted = svc({ mount: "/api/store" });
+		const host = createHost({
+			database: db.raw,
+			services: [mounted],
+		});
+		await host.init();
+
+		const ctx = mounted.serviceContext!;
+		const middleware = createServiceMiddleware(ctx);
+
+		const createItem = createEndpoint(
+			"/items",
+			{ method: "POST", use: [middleware] },
+			async (handlerCtx) => {
+				const svcCtx = (handlerCtx as any).context
+					.serviceCtx as ServiceContext;
+				const body = (handlerCtx as any).body || {};
+				return svcCtx.db.items.create({
+					id: body.id,
+					name: body.name,
+					value: body.value ?? null,
+				});
+			},
+		);
+
+		const listItems = createEndpoint(
+			"/items",
+			{ method: "GET", use: [middleware] },
+			async (handlerCtx) => {
+				const svcCtx = (handlerCtx as any).context
+					.serviceCtx as ServiceContext;
+				const items = await svcCtx.db.items.findMany();
+				return { items, total: items.length };
+			},
+		);
+
+		const router = createRouter(
+			{ createItem, listItems },
+			{ basePath: "/api/store" },
+		);
+
+		// Create
+		const createRes = await router.handler(
+			new Request("http://localhost/api/store/items", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					id: "x1",
+					name: "widget",
+					value: 42,
+				}),
+			}),
+		);
+		expect(createRes.status).toBe(200);
+		const created = await createRes.json();
+		expect(created.id).toBe("x1");
+		expect(created.name).toBe("widget");
+
+		// List
+		const listRes = await router.handler(
+			new Request("http://localhost/api/store/items"),
+		);
+		expect(listRes.status).toBe(200);
+		const listed = await listRes.json();
+		expect(listed.total).toBe(1);
+		expect(listed.items[0].id).toBe("x1");
+
+		await host.shutdown();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 11. Multi-service HTTP routing
+//
+// Two services mounted at different paths, each with their own DB tables.
+// Verifies mount path scoping + context isolation through the HTTP layer.
+// ---------------------------------------------------------------------------
+
+describe("multi-service HTTP routing", () => {
+	let db: TestDatabase;
+
+	beforeEach(async () => {
+		db = await createTestDatabase();
+		db.run(
+			"CREATE TABLE inventory_items (id TEXT PRIMARY KEY, name TEXT NOT NULL, value INTEGER)",
+		);
+		db.run(
+			"CREATE TABLE analytics_items (id TEXT PRIMARY KEY, name TEXT NOT NULL, value INTEGER)",
+		);
+	});
+
+	afterEach(async () => {
+		await db.close();
+	});
+
+	test("two services on different mount paths get correct context and don't cross-contaminate", async () => {
+		const inventorySvc = createService({
+			id: "inventory",
+			version: "1.0.0",
+			dependencies: { database: true },
+			dbSchema: simpleSchema,
+			endpoints: {},
+		});
+
+		const analyticsSvc = createService({
+			id: "analytics",
+			version: "1.0.0",
+			dependencies: { database: true },
+			dbSchema: simpleSchema,
+			endpoints: {},
+		});
+
+		const mountedInv = inventorySvc({ mount: "/api/inventory" });
+		const mountedAna = analyticsSvc({ mount: "/api/analytics" });
+
+		const host = createHost({
+			database: db.raw,
+			baseURL: "http://multi.test",
+			services: [mountedInv, mountedAna],
+		});
+
+		await host.init();
+
+		// Build routers for each service — same endpoint shape, different contexts
+		function buildRouter(
+			mounted: typeof mountedInv,
+			basePath: string,
+		) {
+			const ctx = mounted.serviceContext!;
+			const mw = createServiceMiddleware(ctx);
+
+			const create = createEndpoint(
+				"/items",
+				{ method: "POST", use: [mw] },
+				async (handlerCtx) => {
+					const svcCtx = (handlerCtx as any).context
+						.serviceCtx as ServiceContext;
+					const body = (handlerCtx as any).body || {};
+					return svcCtx.db.items.create({
+						id: body.id,
+						name: body.name,
+						value: body.value ?? null,
+					});
+				},
+			);
+
+			const list = createEndpoint(
+				"/items",
+				{ method: "GET", use: [mw] },
+				async (handlerCtx) => {
+					const svcCtx = (handlerCtx as any).context
+						.serviceCtx as ServiceContext;
+					return {
+						items: await svcCtx.db.items.findMany(),
+						mountPath: svcCtx.hostInfo.mountPath,
+					};
+				},
+			);
+
+			return createRouter({ create, list }, { basePath });
+		}
+
+		const invRouter = buildRouter(mountedInv, "/api/inventory");
+		const anaRouter = buildRouter(mountedAna, "/api/analytics");
+
+		// Write to inventory
+		const invCreateRes = await invRouter.handler(
+			new Request("http://multi.test/api/inventory/items", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					id: "inv-1",
+					name: "screws",
+					value: 100,
+				}),
+			}),
+		);
+		expect(invCreateRes.status).toBe(200);
+
+		// Write to analytics
+		const anaCreateRes = await anaRouter.handler(
+			new Request("http://multi.test/api/analytics/items", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					id: "ana-1",
+					name: "page_views",
+					value: 9999,
+				}),
+			}),
+		);
+		expect(anaCreateRes.status).toBe(200);
+
+		// List from inventory — should only see inventory data
+		const invListRes = await invRouter.handler(
+			new Request("http://multi.test/api/inventory/items"),
+		);
+		const invData = await invListRes.json();
+		expect(invData.items).toHaveLength(1);
+		expect(invData.items[0].name).toBe("screws");
+		expect(invData.mountPath).toBe("/api/inventory");
+
+		// List from analytics — should only see analytics data
+		const anaListRes = await anaRouter.handler(
+			new Request("http://multi.test/api/analytics/items"),
+		);
+		const anaData = await anaListRes.json();
+		expect(anaData.items).toHaveLength(1);
+		expect(anaData.items[0].name).toBe("page_views");
+		expect(anaData.mountPath).toBe("/api/analytics");
+
+		// Verify at SQL level — data lives in separate prefixed tables
+		const rawInv = await db.kysely
+			.selectFrom("inventory_items")
+			.selectAll()
+			.execute();
+		const rawAna = await db.kysely
+			.selectFrom("analytics_items")
+			.selectAll()
+			.execute();
+		expect(rawInv).toHaveLength(1);
+		expect(rawAna).toHaveLength(1);
+		expect((rawInv[0] as any).name).toBe("screws");
+		expect((rawAna[0] as any).name).toBe("page_views");
+
+		await host.shutdown();
+	});
+
+	test("wrong mount path returns 404 from router", async () => {
+		const svc = createService({
+			id: "inventory",
+			version: "1.0.0",
+			dependencies: { database: true },
+			dbSchema: simpleSchema,
+			endpoints: {},
+		});
+
+		const mounted = svc({ mount: "/api/inventory" });
+		const host = createHost({
+			database: db.raw,
+			services: [mounted],
+		});
+		await host.init();
+
+		const mw = createServiceMiddleware(mounted.serviceContext!);
+		const list = createEndpoint(
+			"/items",
+			{ method: "GET", use: [mw] },
+			async () => ({ items: [] }),
+		);
+
+		const router = createRouter(
+			{ list },
+			{ basePath: "/api/inventory" },
+		);
+
+		// Correct path works
+		const goodRes = await router.handler(
+			new Request("http://localhost/api/inventory/items"),
+		);
+		expect(goodRes.status).toBe(200);
+
+		// Wrong path → 404
+		const badRes = await router.handler(
+			new Request("http://localhost/api/billing/items"),
+		);
+		expect(badRes.status).toBe(404);
+
+		// Partial path → 404
+		const partialRes = await router.handler(
+			new Request("http://localhost/api/inventory"),
+		);
+		expect(partialRes.status).toBe(404);
+
+		await host.shutdown();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 12. Middleware composition
+//
+// Verifies that multiple middlewares compose correctly and the
+// ServiceContext middleware integrates with custom middlewares.
+// ---------------------------------------------------------------------------
+
+describe("middleware composition", () => {
+	test("ServiceContext middleware composes with custom middleware", async () => {
+		const db = await createTestDatabase();
+		db.run(
+			"CREATE TABLE mw_items (id TEXT PRIMARY KEY, name TEXT NOT NULL, value INTEGER)",
+		);
+
+		const svc = createService({
+			id: "mw",
+			version: "1.0.0",
+			dependencies: { database: true },
+			dbSchema: simpleSchema,
+			endpoints: {},
+		});
+
+		const mounted = svc({ mount: "/api/mw" });
+		const host = createHost({
+			database: db.raw,
+			services: [mounted],
+		});
+		await host.init();
+
+		const svcMiddleware = createServiceMiddleware(
+			mounted.serviceContext!,
+		);
+
+		// Custom middleware that adds a request ID
+		const requestIdMiddleware = createMiddleware(async () => {
+			return { requestId: "req-12345" };
+		});
+
+		const endpoint = createEndpoint(
+			"/test",
+			{ method: "GET", use: [svcMiddleware, requestIdMiddleware] },
+			async (handlerCtx) => {
+				const ctx = (handlerCtx as any).context;
+				return {
+					hasServiceCtx: ctx.serviceCtx !== undefined,
+					hasDb: ctx.serviceCtx?.db !== undefined,
+					requestId: ctx.requestId,
+				};
+			},
+		);
+
+		const router = createRouter(
+			{ endpoint },
+			{ basePath: "/api/mw" },
+		);
+
+		const res = await router.handler(
+			new Request("http://localhost/api/mw/test"),
+		);
+		expect(res.status).toBe(200);
+
+		const data = await res.json();
+		expect(data.hasServiceCtx).toBe(true);
+		expect(data.hasDb).toBe(true);
+		expect(data.requestId).toBe("req-12345");
+
+		await host.shutdown();
+		await db.close();
+	});
+
+	test("middleware execution order is preserved", async () => {
+		const order: string[] = [];
+
+		const mw1 = createMiddleware(async () => {
+			order.push("first");
+			return {};
+		});
+
+		const mw2 = createMiddleware(async () => {
+			order.push("second");
+			return {};
+		});
+
+		const mw3 = createMiddleware(async () => {
+			order.push("third");
+			return {};
+		});
+
+		const endpoint = createEndpoint(
+			"/order",
+			{ method: "GET", use: [mw1, mw2, mw3] },
+			async () => {
+				order.push("handler");
+				return { ok: true };
+			},
+		);
+
+		const router = createRouter(
+			{ endpoint },
+			{ basePath: "/test" },
+		);
+
+		await router.handler(
+			new Request("http://localhost/test/order"),
+		);
+
+		expect(order).toEqual(["first", "second", "third", "handler"]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 13. Endpoint error handling through the HTTP layer
+// ---------------------------------------------------------------------------
+
+describe("endpoint error handling", () => {
+	test("unhandled error in endpoint returns 500", async () => {
+		const boom = createEndpoint(
+			"/boom",
+			{ method: "GET" },
+			async () => {
+				throw new Error("kaboom");
+			},
+		);
+
+		const router = createRouter({ boom }, { basePath: "/api" });
+
+		const res = await router.handler(
+			new Request("http://localhost/api/boom"),
+		);
+		expect(res.status).toBe(500);
+	});
+
+	test("endpoint can return a custom Response object for error codes", async () => {
+		const notFound = createEndpoint(
+			"/missing",
+			{ method: "GET" },
+			async () => {
+				return new Response(
+					JSON.stringify({ error: "not found" }),
+					{ status: 404, headers: { "Content-Type": "application/json" } },
+				);
+			},
+		);
+
+		const router = createRouter(
+			{ notFound },
+			{ basePath: "/api" },
+		);
+
+		const res = await router.handler(
+			new Request("http://localhost/api/missing"),
+		);
+		expect(res.status).toBe(404);
+		const data = await res.json();
+		expect(data.error).toBe("not found");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 14. Multiple tables per service
+// ---------------------------------------------------------------------------
+
+describe("multiple tables per service", () => {
+	test("service with multiple tables can CRUD each independently", async () => {
+		const multiSchema = {
+			tables: {
+				users: {
+					fields: {
+						id: {
+							type: "string" as const,
+							primaryKey: true,
+							required: true,
+						},
+						email: { type: "string" as const, required: true },
+					},
+				},
+				posts: {
+					fields: {
+						id: {
+							type: "string" as const,
+							primaryKey: true,
+							required: true,
+						},
+						title: { type: "string" as const, required: true },
+						author_id: { type: "string" as const, required: true },
+					},
+				},
+			},
+		} satisfies ServiceDBSchema;
+
+		const db = await createTestDatabase();
+		db.run(
+			"CREATE TABLE blog_users (id TEXT PRIMARY KEY, email TEXT NOT NULL)",
+		);
+		db.run(
+			"CREATE TABLE blog_posts (id TEXT PRIMARY KEY, title TEXT NOT NULL, author_id TEXT NOT NULL)",
+		);
+
+		const svc = createService({
+			id: "blog",
+			version: "1.0.0",
+			dependencies: { database: true },
+			dbSchema: multiSchema,
+			endpoints: {},
+		});
+
+		const host = createHost({
+			database: db.raw,
+			services: [svc({ mount: "/api/blog" })],
+		});
+		await host.init();
+
+		const ctx = host.services.get("blog")!.serviceContext!;
+
+		// Create a user
+		await ctx.db.users.create({ id: "u1", email: "alice@test.com" });
+
+		// Create posts
+		await ctx.db.posts.create({
+			id: "p1",
+			title: "First Post",
+			author_id: "u1",
+		});
+		await ctx.db.posts.create({
+			id: "p2",
+			title: "Second Post",
+			author_id: "u1",
+		});
+
+		// Query each table independently
+		expect(await ctx.db.users.count()).toBe(1);
+		expect(await ctx.db.posts.count()).toBe(2);
+
+		const posts = await ctx.db.posts.findMany({
+			where: [{ field: "author_id", value: "u1" }],
+		});
+		expect(posts).toHaveLength(2);
+
+		// Tables don't leak into each other
+		expect(() => (ctx.db as any).comments).toThrow(
+			'does not have a table named "comments"',
+		);
+
+		await host.shutdown();
+		await db.close();
 	});
 });
