@@ -1,4 +1,4 @@
-# futonic
+# Futonic 🛋️
 
 **A framework for building services that embed into host applications instead of deploying alongside them.**
 
