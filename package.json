@@ -9,6 +9,13 @@
     "test": "bun run --filter futonic test && bun run --filter host-hono test",
     "typecheck": "bun run --cwd packages/futonic typecheck",
     "lint": "bun run --cwd packages/futonic lint",
-    "format": "bun run --cwd packages/futonic format"
+    "format": "bun run --cwd packages/futonic format",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.6.0",
+    "@changesets/cli": "^2.30.0"
   }
 }
