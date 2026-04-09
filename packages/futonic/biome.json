@@ -3,10 +3,30 @@
   "organizeImports": { "enabled": true },
   "linter": {
     "enabled": true,
-    "rules": { "recommended": true }
+    "rules": {
+      "recommended": true,
+      "style": {
+        "noParameterAssign": "off"
+      }
+    }
   },
   "formatter": {
     "enabled": true,
     "indentStyle": "tab"
-  }
+  },
+  "overrides": [
+    {
+      "include": ["**/*.test.ts", "test-utils.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          },
+          "suspicious": {
+            "noExplicitAny": "off"
+          }
+        }
+      }
+    }
+  ]
 }

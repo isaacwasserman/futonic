@@ -18,7 +18,7 @@
  * And gets migration files for just that service's tables.
  */
 
-import { writeFile, mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { EmbeddableService } from "../core/service";
 import { getServiceTables } from "../db/schema";

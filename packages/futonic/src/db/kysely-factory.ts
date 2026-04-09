@@ -7,12 +7,7 @@
  */
 
 import type { Dialect } from "kysely";
-import {
-	Kysely,
-	MysqlDialect,
-	PostgresDialect,
-	SqliteDialect,
-} from "kysely";
+import { Kysely, MysqlDialect, PostgresDialect, SqliteDialect } from "kysely";
 
 export type KyselyDatabaseType = "sqlite" | "mysql" | "postgres";
 

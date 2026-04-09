@@ -14,10 +14,7 @@ describe("createHost", () => {
 
 		expect(() =>
 			createHost({
-				services: [
-					factory({ mount: "/a" }),
-					factory({ mount: "/b" }),
-				],
+				services: [factory({ mount: "/a" }), factory({ mount: "/b" })],
 			}),
 		).toThrow("Namespace collision");
 	});

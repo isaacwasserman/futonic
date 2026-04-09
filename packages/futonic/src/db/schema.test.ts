@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { getServiceTables, prefixTableName } from "./schema";
 import type { MountedService } from "../core/service";
+import { getServiceTables, prefixTableName } from "./schema";
 
 describe("prefixTableName", () => {
 	test("prefixes table name with service id", () => {
@@ -19,7 +19,11 @@ describe("getServiceTables", () => {
 					tables: {
 						invoices: {
 							fields: {
-								id: { type: "string" as const, primaryKey: true, required: true },
+								id: {
+									type: "string" as const,
+									primaryKey: true,
+									required: true,
+								},
 								amount: { type: "number" as const, required: true },
 							},
 						},

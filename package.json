@@ -10,5 +10,8 @@
     "typecheck": "bun run --cwd packages/futonic typecheck",
     "lint": "bun run --cwd packages/futonic lint",
     "format": "bun run --cwd packages/futonic format"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.30.0"
   }
 }

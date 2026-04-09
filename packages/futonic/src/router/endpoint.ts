@@ -1,6 +1,6 @@
-import { createEndpoint, type EndpointOptions } from "better-call";
-import { createServiceMiddleware } from "./middleware";
+import { type EndpointOptions, createEndpoint } from "better-call";
 import type { ServiceContext } from "../core/context";
+import { createServiceMiddleware } from "./middleware";
 
 /**
  * Creates a service endpoint that automatically injects the ServiceContext
@@ -9,7 +9,13 @@ import type { ServiceContext } from "../core/context";
 export function createServiceEndpoint<TResponse>(
 	path: string,
 	options: EndpointOptions & { serviceCtx?: ServiceContext },
-	handler: (ctx: { context: { serviceCtx: ServiceContext }; query: Record<string, unknown>; body: unknown; params: Record<string, string>; headers: Headers }) => Promise<TResponse>,
+	handler: (ctx: {
+		context: { serviceCtx: ServiceContext };
+		query: Record<string, unknown>;
+		body: unknown;
+		params: Record<string, string>;
+		headers: Headers;
+	}) => Promise<TResponse>,
 ) {
 	// If serviceCtx is provided at definition time, inject it.
 	// Otherwise, it must be injected at mount time via the host.
@@ -21,8 +27,12 @@ export function createServiceEndpoint<TResponse>(
 
 	const { serviceCtx: _, ...restOptions } = options;
 
-	return createEndpoint(path, {
-		...restOptions,
-		use: middlewares,
-	}, handler as never);
+	return createEndpoint(
+		path,
+		{
+			...restOptions,
+			use: middlewares,
+		},
+		handler as never,
+	);
 }
