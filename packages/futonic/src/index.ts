@@ -22,7 +22,12 @@ export type {
 	PrefixedTable,
 } from "./db/schema";
 export { getServiceTables, prefixTableName } from "./db/schema";
-export type { InternalAdapter, TableAdapter, FindManyOptions, Where } from "./db/internal-adapter";
+export type {
+	InternalAdapter,
+	TableAdapter,
+	FindManyOptions,
+	Where,
+} from "./db/internal-adapter";
 
 // Router
 export { createServiceEndpoint } from "./router/endpoint";

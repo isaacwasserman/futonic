@@ -37,7 +37,10 @@ export const generateDrizzleSchema: SchemaGenerator = async ({
  * Generates a single Drizzle table definition.
  * Follows better-auth's pattern of mapping field types per provider.
  */
-function generateTable(table: PrefixedTable, provider: DatabaseProvider): string {
+function generateTable(
+	table: PrefixedTable,
+	provider: DatabaseProvider,
+): string {
 	const tableFunc = `${provider}Table`;
 	const fields = table.fields;
 
@@ -53,10 +56,7 @@ function generateTable(table: PrefixedTable, provider: DatabaseProvider): string
 				col += ".primaryKey()";
 			}
 
-			if (
-				field.defaultValue !== null &&
-				field.defaultValue !== undefined
-			) {
+			if (field.defaultValue !== null && field.defaultValue !== undefined) {
 				if (typeof field.defaultValue === "string") {
 					col += `.default("${field.defaultValue}")`;
 				} else {
@@ -79,8 +79,7 @@ function generateTable(table: PrefixedTable, provider: DatabaseProvider): string
 
 			if (field.references) {
 				const onDelete = field.references.onDelete || "cascade";
-				const action =
-					onDelete === "set-null" ? "set null" : onDelete;
+				const action = onDelete === "set-null" ? "set null" : onDelete;
 				col += `.references(() => ${field.references.model}.${field.references.field}, { onDelete: '${action}' })`;
 			}
 

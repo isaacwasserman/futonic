@@ -20,7 +20,11 @@ export const generatePrismaSchema: SchemaGenerator = async ({
 	file,
 }) => {
 	const provider: PrismaProvider =
-		dbProvider === "pg" ? "postgresql" : dbProvider === "mysql" ? "mysql" : "sqlite";
+		dbProvider === "pg"
+			? "postgresql"
+			: dbProvider === "mysql"
+				? "mysql"
+				: "sqlite";
 
 	const filePath = file || "./prisma/schema.prisma";
 	const schemaExists = existsSync(path.resolve(filePath));
@@ -69,7 +73,9 @@ export const generatePrismaSchema: SchemaGenerator = async ({
 				}
 
 				const prismaType = getPrismaType(field, provider);
-				const fieldBuilder = builder.model(modelName).field(fieldName, prismaType);
+				const fieldBuilder = builder
+					.model(modelName)
+					.field(fieldName, prismaType);
 
 				if (field.primaryKey) {
 					fieldBuilder.attribute("id");
@@ -141,7 +147,10 @@ export const generatePrismaSchema: SchemaGenerator = async ({
  * Maps a field definition to its Prisma type string.
  * Forked from better-auth's getType pattern.
  */
-function getPrismaType(field: FieldDefinition, provider: PrismaProvider): string {
+function getPrismaType(
+	field: FieldDefinition,
+	provider: PrismaProvider,
+): string {
 	const optional = !field.required && !field.primaryKey ? "?" : "";
 
 	switch (field.type) {

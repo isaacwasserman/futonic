@@ -1,10 +1,13 @@
 import type { Kysely } from "kysely";
+import { createInternalAdapter } from "../db/internal-adapter";
+import {
+	type DatabaseConnection,
+	createKyselyInstance,
+} from "../db/kysely-factory";
+import { getServiceTables } from "../db/schema";
 import { createLogger } from "./context";
 import type { ServiceContext } from "./context";
 import type { MountedService } from "./service";
-import { createKyselyInstance, type DatabaseConnection } from "../db/kysely-factory";
-import { createInternalAdapter } from "../db/internal-adapter";
-import { getServiceTables } from "../db/schema";
 
 export interface HostConfig {
 	database?: DatabaseConnection;
@@ -56,9 +59,14 @@ export function createHost(config: HostConfig): Host {
 				const logger = createLogger(service.id);
 
 				const serviceCtx: ServiceContext = {
-					db: service.dependencies.database && kyselyInstance
-						? createInternalAdapter(kyselyInstance, service.id, service.dbSchema)
-						: (undefined as never),
+					db:
+						service.dependencies.database && kyselyInstance
+							? createInternalAdapter(
+									kyselyInstance,
+									service.id,
+									service.dbSchema,
+								)
+							: (undefined as never),
 					config: (service.mountConfig.config ?? {}) as Record<string, unknown>,
 					logger,
 					hostInfo: {

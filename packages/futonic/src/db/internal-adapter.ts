@@ -8,7 +8,7 @@
  */
 
 import type { Kysely } from "kysely";
-import { prefixTableName, type ServiceDBSchema } from "./schema";
+import { type ServiceDBSchema, prefixTableName } from "./schema";
 
 export interface Where {
 	field: string;
@@ -71,23 +71,24 @@ export function createInternalAdapter<TSchema extends ServiceDBSchema>(
  * Applies a Where[] clause to a Kysely query builder.
  * Forked from better-auth's `convertWhereClause` pattern.
  */
-function applyWhere<T extends { where(ref: string, op: string, val: unknown): T }>(
-	query: T,
-	where: Where[],
-): T {
+function applyWhere<
+	T extends { where(ref: string, op: string, val: unknown): T },
+>(query: T, where: Where[]): T {
 	for (const condition of where) {
 		const { field, value, operator = "eq" } = condition;
 
 		switch (operator) {
 			case "eq":
-				query = value === null
-					? query.where(field, "is", null as never)
-					: query.where(field, "=", value as never);
+				query =
+					value === null
+						? query.where(field, "is", null as never)
+						: query.where(field, "=", value as never);
 				break;
 			case "ne":
-				query = value === null
-					? query.where(field, "is not", null as never)
-					: query.where(field, "<>", value as never);
+				query =
+					value === null
+						? query.where(field, "is not", null as never)
+						: query.where(field, "<>", value as never);
 				break;
 			case "gt":
 				query = query.where(field, ">", value as never);
