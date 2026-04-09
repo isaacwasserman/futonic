@@ -9,19 +9,15 @@
  * standard Web Request/Response.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import {
-	createEndpoint,
-	createMiddleware,
-	createRouter,
-} from "better-call";
-import { createService } from "./core/service";
-import { createHost } from "./core/host";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createEndpoint, createMiddleware, createRouter } from "better-call";
 import type { ServiceContext } from "./core/context";
+import { createHost } from "./core/host";
+import { createService } from "./core/service";
 import { createInternalAdapter } from "./db/internal-adapter";
 import { detectDatabaseType } from "./db/kysely-factory";
 import type { ServiceDBSchema } from "./db/schema";
-import { createTestDatabase, type TestDatabase } from "./test-utils";
+import { type TestDatabase, createTestDatabase } from "./test-utils";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -85,7 +81,7 @@ describe("Kysely round-trip (real SQLite)", () => {
 			.selectFrom("test")
 			.selectAll()
 			.executeTakeFirst();
-		expect(updated!.val).toBe(100);
+		expect(updated?.val).toBe(100);
 
 		await db.close();
 	});
@@ -127,7 +123,7 @@ describe("InternalAdapter (real SQLite)", () => {
 			{ field: "id", value: "inv-1" },
 		]);
 		expect(row).not.toBeNull();
-		expect(row!.customer_name).toBe("Alice");
+		expect(row?.customer_name).toBe("Alice");
 	});
 
 	test("findMany retrieves multiple rows with options", async () => {
@@ -156,7 +152,7 @@ describe("InternalAdapter (real SQLite)", () => {
 			sortBy: { field: "amount", direction: "desc" },
 			limit: 2,
 		});
-		expect(sorted[0]!.amount).toBe(200);
+		expect(sorted[0]?.amount).toBe(200);
 		expect(sorted).toHaveLength(2);
 	});
 
@@ -217,7 +213,7 @@ describe("InternalAdapter (real SQLite)", () => {
 			where: [{ field: "amount", value: 199, operator: "gt" }],
 		});
 		expect(expensive).toHaveLength(1);
-		expect(expensive[0]!.id).toBe("inv-2");
+		expect(expensive[0]?.id).toBe("inv-2");
 
 		// in
 		const subset = await adapter.invoices.findMany({
@@ -230,7 +226,7 @@ describe("InternalAdapter (real SQLite)", () => {
 			where: [{ field: "status", value: "paid", operator: "ne" }],
 		});
 		expect(notPaid).toHaveLength(1);
-		expect(notPaid[0]!.status).toBe("sent");
+		expect(notPaid[0]?.status).toBe("sent");
 	});
 });
 
@@ -270,13 +266,13 @@ describe("createHost (real SQLite)", () => {
 		await host.init();
 
 		expect(capturedCtx).not.toBeNull();
-		expect(capturedCtx!.hostInfo.mountPath).toBe("/api/billing");
-		expect(capturedCtx!.hostInfo.baseURL).toBe("http://localhost:3000");
+		expect(capturedCtx?.hostInfo.mountPath).toBe("/api/billing");
+		expect(capturedCtx?.hostInfo.baseURL).toBe("http://localhost:3000");
 
-		const row = await capturedCtx!.db.invoices.findOne([
+		const row = await capturedCtx?.db.invoices.findOne([
 			{ field: "id", value: "init-1" },
 		]);
-		expect(row!.amount).toBe(999);
+		expect(row?.amount).toBe(999);
 
 		await host.shutdown();
 		await db.close();
@@ -291,7 +287,9 @@ describe("router handler end-to-end", () => {
 	test("GET endpoint reads from DB and returns JSON", async () => {
 		const db = await createTestDatabase();
 		db.run(CREATE_TABLE);
-		db.run("INSERT INTO billing_invoices VALUES ('inv-1', 100, 'draft', 'Alice')");
+		db.run(
+			"INSERT INTO billing_invoices VALUES ('inv-1', 100, 'draft', 'Alice')",
+		);
 		db.run("INSERT INTO billing_invoices VALUES ('inv-2', 200, 'sent', 'Bob')");
 
 		const adapter = createInternalAdapter(db.kysely, "billing", billingSchema);
@@ -310,10 +308,7 @@ describe("router handler end-to-end", () => {
 			},
 		);
 
-		const router = createRouter(
-			{ listInvoices },
-			{ basePath: "/api/billing" },
-		);
+		const router = createRouter({ listInvoices }, { basePath: "/api/billing" });
 
 		const res = await router.handler(
 			new Request("http://localhost/api/billing/invoices", { method: "GET" }),
@@ -381,7 +376,7 @@ describe("router handler end-to-end", () => {
 		// Verify it's actually persisted
 		const rows = await adapter.invoices.findMany();
 		expect(rows).toHaveLength(1);
-		expect(rows[0]!.customer_name).toBe("Dave");
+		expect(rows[0]?.customer_name).toBe("Dave");
 
 		await db.close();
 	});

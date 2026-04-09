@@ -9,15 +9,15 @@
  * are no ordering dependencies between tests.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createEndpoint, createMiddleware, createRouter } from "better-call";
-import { createService } from "./core/service";
-import { createHost, type Host } from "./core/host";
 import type { ServiceContext } from "./core/context";
+import { type Host, createHost } from "./core/host";
+import { createService } from "./core/service";
 import { createInternalAdapter } from "./db/internal-adapter";
-import { createServiceMiddleware } from "./router/middleware";
 import type { ServiceDBSchema } from "./db/schema";
-import { createTestDatabase, type TestDatabase } from "./test-utils";
+import { createServiceMiddleware } from "./router/middleware";
+import { type TestDatabase, createTestDatabase } from "./test-utils";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -120,10 +120,7 @@ describe("lifecycle ordering", () => {
 
 		// All inits must come before all readys
 		const firstReady = order.indexOf("a:ready");
-		const lastInit = Math.max(
-			order.indexOf("a:init"),
-			order.indexOf("b:init"),
-		);
+		const lastInit = Math.max(order.indexOf("a:init"), order.indexOf("b:init"));
 		expect(lastInit).toBeLessThan(firstReady);
 
 		expect(order).toEqual(["a:init", "b:init", "a:ready", "b:ready"]);
@@ -289,10 +286,7 @@ describe("service context isolation", () => {
 		const host = createHost({
 			database: db.raw,
 			baseURL: "http://localhost:3000",
-			services: [
-				svcA({ mount: "/api/alpha" }),
-				svcB({ mount: "/api/beta" }),
-			],
+			services: [svcA({ mount: "/api/alpha" }), svcB({ mount: "/api/beta" })],
 		});
 
 		await host.init();
@@ -363,16 +357,13 @@ describe("service context isolation", () => {
 
 		const host = createHost({
 			database: db.raw,
-			services: [
-				svcA({ mount: "/api/alpha" }),
-				svcB({ mount: "/api/beta" }),
-			],
+			services: [svcA({ mount: "/api/alpha" }), svcB({ mount: "/api/beta" })],
 		});
 
 		await host.init();
 
-		const ctxA = host.services.get("alpha")!.serviceContext!;
-		const ctxB = host.services.get("beta")!.serviceContext!;
+		const ctxA = host.services.get("alpha")?.serviceContext!;
+		const ctxB = host.services.get("beta")?.serviceContext!;
 
 		// Write to alpha
 		await ctxA.db.items.create({ id: "a1", name: "alpha-only", value: 1 });
@@ -411,7 +402,7 @@ describe("service context isolation", () => {
 
 		await host.init();
 
-		const ctx = host.services.get("alpha")!.serviceContext!;
+		const ctx = host.services.get("alpha")?.serviceContext!;
 		expect(() => (ctx.db as any).nonexistent).toThrow(
 			'does not have a table named "nonexistent"',
 		);
@@ -492,7 +483,7 @@ describe("InternalAdapter edge cases", () => {
 			{ field: "value", value: null, operator: "eq" },
 		]);
 		expect(found).not.toBeNull();
-		expect(found!.id).toBe("n1");
+		expect(found?.id).toBe("n1");
 	});
 
 	test("findMany with ne null (WHERE field IS NOT NULL)", async () => {
@@ -503,7 +494,7 @@ describe("InternalAdapter edge cases", () => {
 			where: [{ field: "value", value: null, operator: "ne" }],
 		});
 		expect(found).toHaveLength(1);
-		expect(found[0]!.id).toBe("n2");
+		expect(found[0]?.id).toBe("n2");
 	});
 
 	// -- All WHERE operators --
@@ -522,7 +513,7 @@ describe("InternalAdapter edge cases", () => {
 				where: [{ field: "value", value: 20 }],
 			});
 			expect(found).toHaveLength(1);
-			expect(found[0]!.id).toBe("2");
+			expect(found[0]?.id).toBe("2");
 		});
 
 		test("ne", async () => {
@@ -562,9 +553,7 @@ describe("InternalAdapter edge cases", () => {
 
 		test("in", async () => {
 			const found = await adapter().items.findMany({
-				where: [
-					{ field: "id", value: ["1", "3", "999"], operator: "in" },
-				],
+				where: [{ field: "id", value: ["1", "3", "999"], operator: "in" }],
 			});
 			expect(found).toHaveLength(2);
 			const ids = found.map((r) => r.id).sort();
@@ -573,9 +562,7 @@ describe("InternalAdapter edge cases", () => {
 
 		test("not_in", async () => {
 			const found = await adapter().items.findMany({
-				where: [
-					{ field: "id", value: ["1", "3"], operator: "not_in" },
-				],
+				where: [{ field: "id", value: ["1", "3"], operator: "not_in" }],
 			});
 			expect(found).toHaveLength(2);
 			const ids = found.map((r) => r.id).sort();
@@ -661,10 +648,9 @@ describe("InternalAdapter edge cases", () => {
 
 	test("update throws when row doesn't exist", async () => {
 		await expect(
-			adapter().items.update(
-				[{ field: "id", value: "nonexistent" }],
-				{ name: "new" },
-			),
+			adapter().items.update([{ field: "id", value: "nonexistent" }], {
+				name: "new",
+			}),
 		).rejects.toThrow();
 	});
 
@@ -679,8 +665,8 @@ describe("InternalAdapter edge cases", () => {
 
 		const row1 = await a.items.findOne([{ field: "id", value: "1" }]);
 		const row2 = await a.items.findOne([{ field: "id", value: "2" }]);
-		expect(row1!.name).toBe("keep");
-		expect(row2!.name).toBe("changed");
+		expect(row1?.name).toBe("keep");
+		expect(row2?.name).toBe("changed");
 	});
 
 	// -- delete edge cases --
@@ -700,9 +686,7 @@ describe("InternalAdapter edge cases", () => {
 
 		expect(await a.items.count([{ field: "name", value: "x" }])).toBe(2);
 		expect(
-			await a.items.count([
-				{ field: "value", value: 15, operator: "gt" },
-			]),
+			await a.items.count([{ field: "value", value: 15, operator: "gt" }]),
 		).toBe(2);
 	});
 });
@@ -735,7 +719,7 @@ describe("service factory", () => {
 	});
 
 	test("mounted instance includes all definition fields", () => {
-		let initRef: Function | undefined;
+		let initRef: ((...args: unknown[]) => unknown) | undefined;
 		const factory = createService({
 			id: "full",
 			version: "2.0.0",
@@ -842,7 +826,7 @@ describe("host.services map", () => {
 		expect(host.services.size).toBe(2);
 		expect(host.services.has("alpha")).toBe(true);
 		expect(host.services.has("beta")).toBe(true);
-		expect(host.services.get("alpha")!.mountConfig.mount).toBe("/a");
+		expect(host.services.get("alpha")?.mountConfig.mount).toBe("/a");
 	});
 
 	test("serviceContext is populated after init", async () => {
@@ -858,14 +842,14 @@ describe("host.services map", () => {
 		});
 
 		// Before init — no context
-		expect(host.services.get("x")!.serviceContext).toBeUndefined();
+		expect(host.services.get("x")?.serviceContext).toBeUndefined();
 
 		await host.init();
 
 		// After init — context exists
-		const ctx = host.services.get("x")!.serviceContext;
+		const ctx = host.services.get("x")?.serviceContext;
 		expect(ctx).toBeDefined();
-		expect(ctx!.hostInfo.mountPath).toBe("/x");
+		expect(ctx?.hostInfo.mountPath).toBe("/x");
 
 		await host.shutdown();
 	});
@@ -897,21 +881,18 @@ describe("mixed database dependencies", () => {
 
 		const host = createHost({
 			database: testDb.raw,
-			services: [
-				withDb({ mount: "/alpha" }),
-				withoutDb({ mount: "/nodb" }),
-			],
+			services: [withDb({ mount: "/alpha" }), withoutDb({ mount: "/nodb" })],
 		});
 
 		await host.init();
 
 		// DB service has a working adapter
-		const ctxDb = host.services.get("alpha")!.serviceContext!;
+		const ctxDb = host.services.get("alpha")?.serviceContext!;
 		await ctxDb.db.items.create({ id: "1", name: "test", value: 1 });
 		expect(await ctxDb.db.items.count()).toBe(1);
 
 		// Non-DB service has no adapter (it's undefined)
-		const ctxNoDb = host.services.get("nodb")!.serviceContext!;
+		const ctxNoDb = host.services.get("nodb")?.serviceContext!;
 		expect(ctxNoDb.hostInfo.mountPath).toBe("/nodb");
 
 		await host.shutdown();
@@ -974,9 +955,7 @@ describe("full HTTP wiring through createHost", () => {
 	});
 
 	test("endpoint receives correct ServiceContext via createHost wiring", async () => {
-		db.run(
-			"CREATE TABLE echo_items (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
-		);
+		db.run("CREATE TABLE echo_items (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
 
 		const echoSchema = {
 			tables: {
@@ -1022,8 +1001,7 @@ describe("full HTTP wiring through createHost", () => {
 			"/context",
 			{ method: "GET", use: [middleware] },
 			async (handlerCtx) => {
-				const svcCtx = (handlerCtx as any).context
-					.serviceCtx as ServiceContext;
+				const svcCtx = (handlerCtx as any).context.serviceCtx as ServiceContext;
 				return {
 					mountPath: svcCtx.hostInfo.mountPath,
 					baseURL: svcCtx.hostInfo.baseURL,
@@ -1033,10 +1011,7 @@ describe("full HTTP wiring through createHost", () => {
 			},
 		);
 
-		const router = createRouter(
-			{ echoEndpoint },
-			{ basePath: "/api/echo" },
-		);
+		const router = createRouter({ echoEndpoint }, { basePath: "/api/echo" });
 
 		const res = await router.handler(
 			new Request("http://testhost:9999/api/echo/context"),
@@ -1079,8 +1054,7 @@ describe("full HTTP wiring through createHost", () => {
 			"/items",
 			{ method: "POST", use: [middleware] },
 			async (handlerCtx) => {
-				const svcCtx = (handlerCtx as any).context
-					.serviceCtx as ServiceContext;
+				const svcCtx = (handlerCtx as any).context.serviceCtx as ServiceContext;
 				const body = (handlerCtx as any).body || {};
 				return svcCtx.db.items.create({
 					id: body.id,
@@ -1094,8 +1068,7 @@ describe("full HTTP wiring through createHost", () => {
 			"/items",
 			{ method: "GET", use: [middleware] },
 			async (handlerCtx) => {
-				const svcCtx = (handlerCtx as any).context
-					.serviceCtx as ServiceContext;
+				const svcCtx = (handlerCtx as any).context.serviceCtx as ServiceContext;
 				const items = await svcCtx.db.items.findMany();
 				return { items, total: items.length };
 			},
@@ -1189,10 +1162,7 @@ describe("multi-service HTTP routing", () => {
 		await host.init();
 
 		// Build routers for each service — same endpoint shape, different contexts
-		function buildRouter(
-			mounted: typeof mountedInv,
-			basePath: string,
-		) {
+		function buildRouter(mounted: typeof mountedInv, basePath: string) {
 			const ctx = mounted.serviceContext!;
 			const mw = createServiceMiddleware(ctx);
 
@@ -1316,10 +1286,7 @@ describe("multi-service HTTP routing", () => {
 			async () => ({ items: [] }),
 		);
 
-		const router = createRouter(
-			{ list },
-			{ basePath: "/api/inventory" },
-		);
+		const router = createRouter({ list }, { basePath: "/api/inventory" });
 
 		// Correct path works
 		const goodRes = await router.handler(
@@ -1372,9 +1339,7 @@ describe("middleware composition", () => {
 		});
 		await host.init();
 
-		const svcMiddleware = createServiceMiddleware(
-			mounted.serviceContext!,
-		);
+		const svcMiddleware = createServiceMiddleware(mounted.serviceContext!);
 
 		// Custom middleware that adds a request ID
 		const requestIdMiddleware = createMiddleware(async () => {
@@ -1394,10 +1359,7 @@ describe("middleware composition", () => {
 			},
 		);
 
-		const router = createRouter(
-			{ endpoint },
-			{ basePath: "/api/mw" },
-		);
+		const router = createRouter({ endpoint }, { basePath: "/api/mw" });
 
 		const res = await router.handler(
 			new Request("http://localhost/api/mw/test"),
@@ -1440,14 +1402,9 @@ describe("middleware composition", () => {
 			},
 		);
 
-		const router = createRouter(
-			{ endpoint },
-			{ basePath: "/test" },
-		);
+		const router = createRouter({ endpoint }, { basePath: "/test" });
 
-		await router.handler(
-			new Request("http://localhost/test/order"),
-		);
+		await router.handler(new Request("http://localhost/test/order"));
 
 		expect(order).toEqual(["first", "second", "third", "handler"]);
 	});
@@ -1459,38 +1416,25 @@ describe("middleware composition", () => {
 
 describe("endpoint error handling", () => {
 	test("unhandled error in endpoint returns 500", async () => {
-		const boom = createEndpoint(
-			"/boom",
-			{ method: "GET" },
-			async () => {
-				throw new Error("kaboom");
-			},
-		);
+		const boom = createEndpoint("/boom", { method: "GET" }, async () => {
+			throw new Error("kaboom");
+		});
 
 		const router = createRouter({ boom }, { basePath: "/api" });
 
-		const res = await router.handler(
-			new Request("http://localhost/api/boom"),
-		);
+		const res = await router.handler(new Request("http://localhost/api/boom"));
 		expect(res.status).toBe(500);
 	});
 
 	test("endpoint can return a custom Response object for error codes", async () => {
-		const notFound = createEndpoint(
-			"/missing",
-			{ method: "GET" },
-			async () => {
-				return new Response(
-					JSON.stringify({ error: "not found" }),
-					{ status: 404, headers: { "Content-Type": "application/json" } },
-				);
-			},
-		);
+		const notFound = createEndpoint("/missing", { method: "GET" }, async () => {
+			return new Response(JSON.stringify({ error: "not found" }), {
+				status: 404,
+				headers: { "Content-Type": "application/json" },
+			});
+		});
 
-		const router = createRouter(
-			{ notFound },
-			{ basePath: "/api" },
-		);
+		const router = createRouter({ notFound }, { basePath: "/api" });
 
 		const res = await router.handler(
 			new Request("http://localhost/api/missing"),
@@ -1555,7 +1499,7 @@ describe("multiple tables per service", () => {
 		});
 		await host.init();
 
-		const ctx = host.services.get("blog")!.serviceContext!;
+		const ctx = host.services.get("blog")?.serviceContext!;
 
 		// Create a user
 		await ctx.db.users.create({ id: "u1", email: "alice@test.com" });

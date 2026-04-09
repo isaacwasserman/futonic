@@ -73,9 +73,7 @@ describe("CLI pipeline: service → tables → generator", () => {
 		expect(result.code).toContain("billing_invoices");
 		expect(result.code).toContain("billing_line_items");
 		expect(result.code).toContain("pgTable");
-		expect(result.code).toContain(
-			".references(() => billing_invoices.id",
-		);
+		expect(result.code).toContain(".references(() => billing_invoices.id");
 	});
 
 	test("full pipeline produces valid SQL DDL", async () => {
@@ -107,9 +105,7 @@ describe("CLI pipeline: service → tables → generator", () => {
 			endpoints: {},
 		};
 
-		const tables = getServiceTables([
-			{ ...noDB, mountConfig: { mount: "" } },
-		]);
+		const tables = getServiceTables([{ ...noDB, mountConfig: { mount: "" } }]);
 		expect(tables.size).toBe(0);
 	});
 });

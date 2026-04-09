@@ -57,9 +57,9 @@ async function createBunDatabase(): Promise<TestDatabase> {
 						trimmed.startsWith("PRAGMA");
 
 					// RETURNING clauses make writes behave as readers
-				const hasReturning = /\bRETURNING\b/i.test(sql);
+					const hasReturning = /\bRETURNING\b/i.test(sql);
 
-				return new Proxy(stmt, {
+					return new Proxy(stmt, {
 						get(stmtTarget, stmtProp) {
 							if (stmtProp === "reader") return isReader || hasReturning;
 							const val = (stmtTarget as any)[stmtProp];
