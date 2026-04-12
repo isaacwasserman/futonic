@@ -25,16 +25,56 @@ No more `docker-compose up` with 6 services just to work on a feature. No more d
 **Simplicity sells:**
 Fewer moving parts means fewer things that break at 2am. One deploy. One database. One set of logs. Developers can always decompose later if they outgrow it — but most apps never will. The easier your service is to adopt, the more people will use it.
 
-## How it works: a vertical slice
+## How it works: the vertical slice
 
-The best way to understand futonic is to follow a single request all the way through — from the browser to the database and back. Here's what happens when someone creates an invoice by hitting `POST /api/billing/invoices`.
+A futonic service is a **vertical slice** of your application. It defines everything from the client interface down to the database — API endpoints, input validation, business logic, and table schemas — as a single, self-contained unit.
 
-### Layer 1: The service author defines tables and endpoints
+```mermaid
+block-beta
+  columns 3
+  block:host["Host Application"]:3
+    columns 3
+    space:3
+    block:app["Your App Code"]:1
+      columns 1
+      appRoutes["Routes"]
+      appLogic["Logic"]
+      appTables["Tables"]
+    end
+    block:billing["@acme/billing"]:1
+      columns 1
+      billingAPI["Endpoints"]
+      billingLogic["Logic"]
+      billingTables["Tables"]
+    end
+    block:auth["@acme/auth"]:1
+      columns 1
+      authAPI["Endpoints"]
+      authLogic["Logic"]
+      authTables["Tables"]
+    end
+    space:3
+  end
 
-A futonic service is a bundle of database tables and API endpoints. The service author publishes this as an npm package.
+  style billing stroke:#22c55e,stroke-width:2px
+  style auth stroke:#22c55e,stroke-width:2px
+  style app stroke:#6366f1,stroke-width:2px
+```
+
+Each green block is a futonic service — a vertical slice that owns its entire stack, published as an npm package. The host application mounts them alongside its own code. They all share one process, one database, one deployment.
+
+This is what makes futonic different from microservices. A microservice is also a vertical slice, but it pays for that independence with its own container, its own deployment pipeline, and network hops between every call. A futonic service gets the same self-containment for free:
+
+- **No deployment cost.** It runs inside your existing process. No extra containers, no extra infrastructure, no extra cloud bill.
+- **No networking latency.** Service calls from backend code are direct function calls — same process, same database connection pool, zero serialization.
+- **No protocol constraints.** Endpoints are built on web standard `Request`/`Response`, so a service can return JSON, full HTML pages, server-sent event streams, file downloads — anything `Response` supports.
+
+### What a service looks like
+
+A service defines its database tables and API endpoints. The service author publishes this as an npm package:
 
 ```typescript
-// @acme/billing — the service package
+// @acme/billing
 
 import { createService, createEndpoint } from "futonic";
 
@@ -56,7 +96,7 @@ export const billing = createService({
 });
 ```
 
-Endpoints are defined as functions that receive a `ServiceContext` via middleware — giving them access to the database, config, and logger:
+Endpoints receive a `ServiceContext` via middleware — giving them scoped access to the service's database tables, config, and logger:
 
 ```typescript
 export function createBillingEndpoints(use: Middleware[]) {
@@ -78,15 +118,16 @@ export function createBillingEndpoints(use: Middleware[]) {
 }
 ```
 
-### Layer 2: The host developer mounts the service
+The endpoint writes to `svc.db.invoices`, but the actual table in the database is `billing_invoices` — automatically prefixed with the service ID. A second service with its own `invoices` table would hit a completely separate table. Same database, no collisions.
 
-The host developer installs the service and wires it into their app. Futonic auto-detects their database driver — `pg`, `mysql2`, `better-sqlite3`, or `bun:sqlite`.
+### How the host mounts it
+
+The host developer installs the service and wires it in. Futonic auto-detects the database driver — `pg`, `mysql2`, `better-sqlite3`, or `bun:sqlite`:
 
 ```typescript
 import { createHost } from "futonic";
 import { billing, createBillingRouter } from "@acme/billing";
 
-// Mount the service and initialize
 const host = createHost({
   database: pool,  // Their existing pg.Pool, mysql2 pool, or sqlite instance
   baseURL: "http://localhost:3000",
@@ -98,9 +139,7 @@ const host = createHost({
 await host.init();
 ```
 
-### Layer 3: The framework catch-all routes to futonic
-
-The host developer adds a single catch-all route in their framework of choice. All requests under the mount path flow into the service's router.
+Then a single catch-all route in their framework of choice:
 
 ```typescript
 // Hono
@@ -111,92 +150,7 @@ import { toNextJsHandler } from "futonic/next";
 export const { GET, POST, PUT, DELETE, PATCH } = toNextJsHandler(billingRouter);
 ```
 
-### Layer 4: Middleware injects the service context
-
-When a request hits `POST /api/billing/invoices`, futonic's middleware runs before the endpoint handler. It attaches the `ServiceContext` — the service's window into the host:
-
-```typescript
-ctx.context.serviceCtx = {
-  db,        // Database adapter scoped to this service's prefixed tables
-  config,    // Mount-time configuration
-  logger,    // Logger prefixed with [futonic:billing]
-  hostInfo,  // { baseURL, mountPath }
-};
-```
-
-The endpoint handler never touches the raw database or knows which framework it's running in. It just uses `ctx.context.serviceCtx`.
-
-### Layer 5: The endpoint handler runs
-
-The `createInvoice` handler receives the validated request body (via Zod) and the injected service context. It calls `svc.db.invoices.create(...)` — using the unprefixed table name.
-
-```typescript
-async (ctx) => {
-  const svc = ctx.context.serviceCtx;
-  const invoice = await svc.db.invoices.create({
-    id: crypto.randomUUID(),
-    ...ctx.body,
-  });
-  svc.logger.info(`Invoice created: ${invoice.id}`);
-  //=> [futonic:billing] Invoice created: 7f2a...
-  return invoice;
-}
-```
-
-### Layer 6: The database layer translates to prefixed tables
-
-Under the hood, `svc.db.invoices` is a proxy that rewrites all queries to target `billing_invoices` — the table name prefixed with the service ID. This is how multiple services share one database without collisions.
-
-```
-svc.db.invoices.create({ id: "7f2a...", amount: 4200, status: "draft" })
-                  ↓
-INSERT INTO billing_invoices (id, amount, status) VALUES ('7f2a...', 4200, 'draft')
-                  ↓
-RETURNING *
-```
-
-A second service with its own `invoices` table would query `other_service_invoices` — completely isolated, same database.
-
-### Layer 7: The response flows back
-
-The return value from the handler is serialized to JSON and sent back as a standard `Response`. The client sees:
-
-```json
-{
-  "id": "7f2a...",
-  "amount": 4200,
-  "status": "draft"
-}
-```
-
-### The full picture
-
-```
-Browser                 Framework           Futonic                    Database
-  │                        │                   │                          │
-  │  POST /api/billing/    │                   │                          │
-  │  invoices              │                   │                          │
-  │───────────────────────>│                   │                          │
-  │                        │  catch-all route  │                          │
-  │                        │──────────────────>│                          │
-  │                        │                   │  middleware injects      │
-  │                        │                   │  ServiceContext          │
-  │                        │                   │                          │
-  │                        │                   │  Zod validates body      │
-  │                        │                   │                          │
-  │                        │                   │  handler calls           │
-  │                        │                   │  db.invoices.create()    │
-  │                        │                   │                          │
-  │                        │                   │  INSERT INTO             │
-  │                        │                   │  billing_invoices ──────>│
-  │                        │                   │                          │
-  │                        │                   │  <── row returned ───────│
-  │                        │                   │                          │
-  │  <── 200 JSON ─────────│<──────────────────│                          │
-  │                        │                   │                          │
-```
-
-Every layer has a single job. The service author writes endpoints and schemas. The host developer mounts and routes. Futonic handles context injection, table prefixing, and database driver detection. Nothing leaks across boundaries.
+That's it. The billing service handles requests at `/api/billing/*`, stores data in the host's database under prefixed tables, and the host didn't need to understand any of the service's internals to set it up.
 
 ## More features
 
