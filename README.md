@@ -25,14 +25,20 @@ No more `docker-compose up` with 6 services just to work on a feature. No more d
 **Simplicity sells:**
 Fewer moving parts means fewer things that break at 2am. One deploy. One database. One set of logs. Developers can always decompose later if they outgrow it — but most apps never will. The easier your service is to adopt, the more people will use it.
 
-## How it works
+## How it works: a vertical slice
 
-You define a service as a bundle of **API endpoints** and **database tables**. Futonic handles the embedding.
+The best way to understand futonic is to follow a single request all the way through — from the browser to the database and back. Here's what happens when someone creates an invoice by hitting `POST /api/billing/invoices`.
+
+### Layer 1: The service author defines tables and endpoints
+
+A futonic service is a bundle of database tables and API endpoints. The service author publishes this as an npm package.
 
 ```typescript
+// @acme/billing — the service package
+
 import { createService, createEndpoint } from "futonic";
 
-const billing = createService({
+export const billing = createService({
   id: "billing",
   version: "0.1.0",
   dependencies: { database: true },
@@ -47,25 +53,40 @@ const billing = createService({
       },
     },
   },
-  endpoints: {
-    listInvoices: createEndpoint("/invoices", { method: "GET" }, async (ctx) => {
-      const items = await ctx.context.serviceCtx.db.invoices.findMany();
-      return { items };
-    }),
-    createInvoice: createEndpoint("/invoices", { method: "POST" }, async (ctx) => {
-      const invoice = await ctx.context.serviceCtx.db.invoices.create(ctx.body);
-      return invoice;
-    }),
-  },
 });
 ```
 
-Your users mount it in a few lines:
+Endpoints are defined as functions that receive a `ServiceContext` via middleware — giving them access to the database, config, and logger:
+
+```typescript
+export function createBillingEndpoints(use: Middleware[]) {
+  return {
+    createInvoice: createEndpoint(
+      "/invoices",
+      { method: "POST", use, body: z.object({ amount: z.number(), status: z.string() }) },
+      async (ctx) => {
+        const svc = ctx.context.serviceCtx;
+        const invoice = await svc.db.invoices.create({
+          id: crypto.randomUUID(),
+          ...ctx.body,
+        });
+        svc.logger.info(`Invoice created: ${invoice.id}`);
+        return invoice;
+      },
+    ),
+  };
+}
+```
+
+### Layer 2: The host developer mounts the service
+
+The host developer installs the service and wires it into their app. Futonic auto-detects their database driver — `pg`, `mysql2`, `better-sqlite3`, or `bun:sqlite`.
 
 ```typescript
 import { createHost } from "futonic";
-import { billing } from "@acme/billing";
+import { billing, createBillingRouter } from "@acme/billing";
 
+// Mount the service and initialize
 const host = createHost({
   database: pool,  // Their existing pg.Pool, mysql2 pool, or sqlite instance
   baseURL: "http://localhost:3000",
@@ -77,50 +98,111 @@ const host = createHost({
 await host.init();
 ```
 
-That's it. The billing service handles requests at `/api/billing/*` and stores data in the host's database under prefixed tables (`billing_invoices`, `billing_customers`, etc.) — no collisions, no conflicts.
+### Layer 3: The framework catch-all routes to futonic
 
-## Features
-
-### Web standard endpoints
-
-Define endpoints as functions that return any web standard `Response` — JSON, HTML, streams, redirects, file downloads. No proprietary abstractions. Framework adapters (starting with [Next.js](https://nextjs.org)) let host developers wire up your service in one line:
+The host developer adds a single catch-all route in their framework of choice. All requests under the mount path flow into the service's router.
 
 ```typescript
-// Host's app/api/billing/[...path]/route.ts
-import { toNextJsHandler } from "futonic/next";
+// Hono
+app.all("/api/billing/*", (c) => billingRouter.handler(c.req.raw));
 
+// Next.js — app/api/billing/[...path]/route.ts
+import { toNextJsHandler } from "futonic/next";
 export const { GET, POST, PUT, DELETE, PATCH } = toNextJsHandler(billingRouter);
 ```
 
-### Prefixed database tables
+### Layer 4: Middleware injects the service context
 
-Your service's tables are automatically prefixed with its ID. A `billing` service with an `invoices` table becomes `billing_invoices` in the actual database — no collisions with the host or other services. You interact with tables using their unprefixed names; the scoping is transparent.
+When a request hits `POST /api/billing/invoices`, futonic's middleware runs before the endpoint handler. It attaches the `ServiceContext` — the service's window into the host:
 
 ```typescript
-// You just write:
-await ctx.db.invoices.findMany({ where: [{ field: "status", value: "paid" }] });
-// Futonic queries `billing_invoices` under the hood
+ctx.context.serviceCtx = {
+  db,        // Database adapter scoped to this service's prefixed tables
+  config,    // Mount-time configuration
+  logger,    // Logger prefixed with [futonic:billing]
+  hostInfo,  // { baseURL, mountPath }
+};
 ```
 
-Ship a CLI so your users can generate migration files for their ORM of choice:
+The endpoint handler never touches the raw database or knows which framework it's running in. It just uses `ctx.context.serviceCtx`.
 
-```bash
-npx @acme/billing generate --orm=drizzle --provider=pg --out=schema.ts
-npx @acme/billing generate --orm=prisma --provider=mysql
-npx @acme/billing generate --orm=kysely --provider=sqlite
+### Layer 5: The endpoint handler runs
+
+The `createInvoice` handler receives the validated request body (via Zod) and the injected service context. It calls `svc.db.invoices.create(...)` — using the unprefixed table name.
+
+```typescript
+async (ctx) => {
+  const svc = ctx.context.serviceCtx;
+  const invoice = await svc.db.invoices.create({
+    id: crypto.randomUUID(),
+    ...ctx.body,
+  });
+  svc.logger.info(`Invoice created: ${invoice.id}`);
+  //=> [futonic:billing] Invoice created: 7f2a...
+  return invoice;
+}
 ```
 
-### Type safety end to end
+### Layer 6: The database layer translates to prefixed tables
 
-Your service's schema, endpoint inputs, endpoint outputs, and client calls are all fully typed. Define your schema once and TypeScript carries it through to whoever consumes it.
+Under the hood, `svc.db.invoices` is a proxy that rewrites all queries to target `billing_invoices` — the table name prefixed with the service ID. This is how multiple services share one database without collisions.
 
-### Skip networking on the backend
+```
+svc.db.invoices.create({ id: "7f2a...", amount: 4200, status: "draft" })
+                  ↓
+INSERT INTO billing_invoices (id, amount, status) VALUES ('7f2a...', 4200, 'draft')
+                  ↓
+RETURNING *
+```
 
-When the host's backend code calls your service, there's no HTTP round-trip. Your service runs in the same process, shares the same database connection pool, and returns results directly. Zero serialization overhead.
+A second service with its own `invoices` table would query `other_service_invoices` — completely isolated, same database.
+
+### Layer 7: The response flows back
+
+The return value from the handler is serialized to JSON and sent back as a standard `Response`. The client sees:
+
+```json
+{
+  "id": "7f2a...",
+  "amount": 4200,
+  "status": "draft"
+}
+```
+
+### The full picture
+
+```
+Browser                 Framework           Futonic                    Database
+  │                        │                   │                          │
+  │  POST /api/billing/    │                   │                          │
+  │  invoices              │                   │                          │
+  │───────────────────────>│                   │                          │
+  │                        │  catch-all route  │                          │
+  │                        │──────────────────>│                          │
+  │                        │                   │  middleware injects      │
+  │                        │                   │  ServiceContext          │
+  │                        │                   │                          │
+  │                        │                   │  Zod validates body      │
+  │                        │                   │                          │
+  │                        │                   │  handler calls           │
+  │                        │                   │  db.invoices.create()    │
+  │                        │                   │                          │
+  │                        │                   │  INSERT INTO             │
+  │                        │                   │  billing_invoices ──────>│
+  │                        │                   │                          │
+  │                        │                   │  <── row returned ───────│
+  │                        │                   │                          │
+  │  <── 200 JSON ─────────│<──────────────────│                          │
+  │                        │                   │                          │
+```
+
+Every layer has a single job. The service author writes endpoints and schemas. The host developer mounts and routes. Futonic handles context injection, table prefixing, and database driver detection. Nothing leaks across boundaries.
+
+## More features
 
 ### Type-safe RPC from the frontend
 
-Host developers consume your service from their frontend with a fully typed client:
+Host developers consume your service from their frontend with a fully typed client — autocomplete, return types, and error types included:
 
 ```typescript
 import { createClient } from "futonic/client";
@@ -130,16 +212,34 @@ const billing = createClient<BillingRouter>({
   baseURL: "/api/billing",
 });
 
-// Fully typed — autocomplete, return types, error types
 const { data } = await billing.listInvoices();
 const { data: invoice } = await billing.createInvoice({
   body: { amount: 4200, status: "draft" },
 });
 ```
 
+### Skip networking on the backend
+
+When the host's backend code needs to call the service, there's no HTTP round-trip. The service runs in the same process, shares the same database connection pool, and returns results directly:
+
+```typescript
+const svc = host.services.get("billing").serviceContext!;
+const invoices = await svc.db.invoices.findMany();
+```
+
+### Generate migrations for any ORM
+
+Ship a CLI so your users can generate migration files for their ORM of choice:
+
+```bash
+npx @acme/billing generate --orm=drizzle --provider=pg --out=schema.ts
+npx @acme/billing generate --orm=prisma --provider=mysql
+npx @acme/billing generate --orm=kysely --provider=sqlite
+```
+
 ### Return any web standard response
 
-Your endpoints aren't limited to JSON. Serve full HTML pages for embedded UIs, server-sent event streams for real-time updates, file downloads, redirects — whatever `Response` supports. Build an entire admin dashboard that lives inside the host app.
+Endpoints aren't limited to JSON. Serve full HTML pages for embedded UIs, server-sent event streams for real-time updates, file downloads, redirects — whatever `Response` supports. Build an entire admin dashboard that lives inside the host app.
 
 ## Things you could build
 
