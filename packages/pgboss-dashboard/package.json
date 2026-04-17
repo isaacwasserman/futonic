@@ -1,0 +1,35 @@
+{
+	"name": "futonic-pgboss-dashboard",
+	"version": "0.1.0",
+	"description": "Embed @pg-boss/dashboard into a host application as a futonic service",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		}
+	},
+	"scripts": {
+		"build": "bun run scripts/build.ts",
+		"dev": "bun --watch src/index.ts",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check src/",
+		"format": "biome format --write src/"
+	},
+	"dependencies": {
+		"futonic": "workspace:*"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"@pg-boss/dashboard": "^1.1.2",
+		"@types/bun": "latest",
+		"typescript": "^5.7.0"
+	},
+	"peerDependencies": {
+		"@pg-boss/dashboard": ">=1.0.0"
+	},
+	"files": ["dist"],
+	"license": "MIT"
+}
