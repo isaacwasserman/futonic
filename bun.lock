@@ -74,10 +74,12 @@
         "@biomejs/biome": "^1.9.4",
         "@pg-boss/dashboard": "^1.1.2",
         "@types/bun": "latest",
+        "hono": "^4.12.9",
         "typescript": "^5.7.0",
       },
       "peerDependencies": {
         "@pg-boss/dashboard": ">=1.0.0",
+        "hono": ">=4.0.0",
       },
     },
   },

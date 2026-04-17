@@ -1,31 +1,39 @@
 # futonic-pgboss-dashboard
 
-Embed [`@pg-boss/dashboard`](https://github.com/timgit/pg-boss/tree/master/packages/dashboard) into a host application as a [futonic](../futonic) service.
+Embed [`@pg-boss/dashboard`](https://github.com/timgit/pg-boss/tree/master/packages/dashboard)
+into a host application as a [futonic](../futonic) service. No subprocess,
+no proxy hop, no extra container — the dashboard's Hono app runs in the same
+process as your app.
 
 ## The problem
 
-`@pg-boss/dashboard` ships as a standalone Hono + React Router 7 app with a CLI
-binary. It auto-starts an HTTP server on import and has no programmatic export
-you can mount into an existing framework. If you want the dashboard alongside
-an app you already run, you normally deploy a second container, set up an
-internal port, and wire a reverse proxy yourself.
+`@pg-boss/dashboard` ships as a built React Router 7 + Hono SSR app. Its
+entry point (`build/server/index.js`) calls `@hono/node-server`'s `serve()`
+as a module-level side effect, so the package has no programmatic export you
+can mount into an existing framework.
 
 ## What this package does
 
-- Spawns `@pg-boss/dashboard` as a child process bound to a random localhost port.
-- Reverse-proxies every request that hits the service's mount path to that subprocess.
-- Ties the subprocess lifetime to your futonic host — one `init`, one `shutdown`.
+- Imports `@pg-boss/dashboard/build/server/index.js` in-process.
+- `createHonoServer` from `react-router-hono-server` returns the underlying
+  Hono app even when it also auto-calls `serve()`, so we grab the app from
+  the default export.
+- Immediately closes the stray `net.Server` left over from `serve()` using
+  `process._getActiveHandles()`, so no TCP listener leaks.
+- Exposes `app.fetch(request)` as the service's request handler.
 
-The result: a single mount point in your router, no extra container, no extra deploy.
+Result: the host mounts one path, requests are served by Hono directly with
+no network hop and no dangling file descriptors.
 
 ## Install
 
 ```bash
-npm install futonic-pgboss-dashboard @pg-boss/dashboard
+npm install futonic-pgboss-dashboard @pg-boss/dashboard hono
 ```
 
-`@pg-boss/dashboard` is a peer dependency — install it in the host app so it
-resolves from the host's `node_modules`.
+`@pg-boss/dashboard` and `hono` are peer dependencies so they resolve from
+the host's `node_modules` and match whatever version of `hono` the host is
+already using.
 
 ## Usage
 
@@ -42,7 +50,10 @@ const dashboard = pgbossDashboard({
   config: {
     databaseURL: process.env.DATABASE_URL!,
     schema: "pgboss",
-    auth: { username: "admin", password: process.env.DASHBOARD_PASSWORD! },
+    auth: {
+      username: "admin",
+      password: process.env.DASHBOARD_PASSWORD!,
+    },
   },
 });
 
@@ -65,34 +76,42 @@ process.on("SIGTERM", async () => {
 
 ## Configuration
 
-| Option              | Type                                    | Description                                                                   |
-| ------------------- | --------------------------------------- | ----------------------------------------------------------------------------- |
-| `databaseURL`       | `string` (required)                     | Postgres connection string. Supports `Name=url\|Name2=url2` for multi-DB.     |
-| `schema`            | `string`                                | pg-boss schema name. Defaults to `pgboss`. Pipe-separated to match multi-DB.  |
-| `auth`              | `{ username, password }`                | Enables HTTP basic auth on the dashboard.                                     |
-| `subprocessPort`    | `number`                                | Pin the subprocess port. A free port is chosen when omitted.                  |
-| `subprocessHost`    | `string`                                | Interface the subprocess binds. Defaults to `127.0.0.1`.                      |
-| `binPath`           | `string`                                | Override the resolved path to `@pg-boss/dashboard`'s CLI entry.               |
-| `stdio`             | `"inherit" \| "pipe" \| "ignore"`       | Subprocess stdout/stderr handling. Defaults to `inherit`.                     |
-| `startupTimeoutMs`  | `number`                                | How long to wait for the subprocess to open its port. Defaults to `15_000`.   |
+| Option        | Type                     | Description                                                                    |
+| ------------- | ------------------------ | ------------------------------------------------------------------------------ |
+| `databaseURL` | `string` (required)      | Postgres connection string. Supports `Name=url\|Name2=url2` for multi-DB.      |
+| `schema`      | `string`                 | pg-boss schema name. Defaults to `pgboss`. Pipe-separated to match multi-DB.   |
+| `auth`        | `{ username, password }` | Enables HTTP basic auth on the dashboard.                                      |
+
+`databaseURL`, `schema`, and `auth` are set as `DATABASE_URL`,
+`PGBOSS_SCHEMA`, and `PGBOSS_DASHBOARD_AUTH_USERNAME` / `_PASSWORD`
+environment variables before the upstream module is imported, which is how
+`@pg-boss/dashboard` consumes its configuration.
 
 ## How mounting works
 
-The dashboard is built with no `basename`, so internally it routes everything
-from `/`. The proxy strips your mount prefix (`/admin/queues`) before
-forwarding, so the dashboard sees requests as if it were at the root.
+The upstream dashboard is built with `basename: "/"` and has no build-time
+option to change it, so the proxy handler strips your mount prefix from the
+incoming path before handing the `Request` to `app.fetch`. A request at
+`/admin/queues/jobs` becomes `/jobs` inside the dashboard.
 
-Because the dashboard emits absolute asset paths, the cleanest deployment is
-to mount it at a path where `/assets/*` does not collide with other routes.
-If you're mounting under a sub-path and see broken asset URLs, either run the
-dashboard behind a subdomain (`queues.myapp.com`) or add a catch-all for its
-asset paths.
+The dashboard emits absolute URLs for client assets (e.g. `/assets/root-*.js`).
+For those to resolve correctly when mounted under a sub-path, either mount
+at `/` or add a pass-through route for the dashboard's asset paths. Mounting
+behind a subdomain (`queues.myapp.com`) also works and keeps URLs clean.
 
-## Shutdown
+## Runtime behaviour
 
-`host.shutdown()` kills the subprocess with `SIGTERM`, then `SIGKILL` after 5s
-if it hasn't exited. The subprocess is also `unref`'d, so if you forget to call
-`shutdown()` it still exits cleanly with the parent.
+- The stray HTTP listener spawned by the upstream's build is closed
+  immediately after import via `process._getActiveHandles()`. This API is
+  undocumented but has shipped in every Node release since 0.10; a warning
+  is logged if the runtime does not expose it.
+- The Hono app holds no external resources of its own. The dashboard opens
+  its own `pg.Pool` on first request (via `DATABASE_URL`); it is separate
+  from futonic's shared Kysely instance, so this service declares
+  `dependencies: { database: false }`.
+- Tested on Node 22. Bun is not supported because the upstream uses
+  `react-dom/server`'s `renderToPipeableStream`, which Bun's `react-dom`
+  shim does not implement.
 
 ## License
 

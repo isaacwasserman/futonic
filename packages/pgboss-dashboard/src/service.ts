@@ -1,63 +1,31 @@
 import type { MountedService, ServiceConfig } from "futonic";
-import { createDashboardProxy } from "./proxy";
-import {
-	type DashboardSubprocess,
-	startDashboardSubprocess,
-} from "./subprocess";
+import type { Hono } from "hono";
+import { type DashboardEnv, loadDashboard } from "./upstream";
 
-export interface PgBossDashboardConfig {
-	/**
-	 * Postgres connection string that `@pg-boss/dashboard` should use.
-	 * Pipe-separated `Name=url|Name2=url2` is supported for multi-database setups.
-	 */
-	databaseURL: string;
-	/**
-	 * pg-boss schema name. Pipe-separated when pairing with multiple databases.
-	 * Defaults to `pgboss`.
-	 */
-	schema?: string;
-	/** Optional HTTP basic auth for the dashboard. */
-	auth?: { username: string; password: string };
-	/**
-	 * Port for the internal subprocess to bind. If omitted, a random free port
-	 * is chosen. The dashboard is only reachable via the service proxy —
-	 * callers should bind to localhost only.
-	 */
-	subprocessPort?: number;
-	/** Host interface the subprocess binds. Defaults to 127.0.0.1. */
-	subprocessHost?: string;
-	/**
-	 * Override the resolved path to the @pg-boss/dashboard CLI. Useful for
-	 * monorepos where the package lives outside standard node_modules lookup.
-	 */
-	binPath?: string;
-	/** Pass-through for subprocess stdout/stderr. Defaults to "inherit". */
-	stdio?: "inherit" | "pipe" | "ignore";
-	/** Maximum startup wait for the subprocess. Defaults to 15_000 ms. */
-	startupTimeoutMs?: number;
-}
+export interface PgBossDashboardConfig extends DashboardEnv {}
 
 /**
- * A mounted pgboss-dashboard service, extended with a handle to the running
- * subprocess once `host.init()` has completed.
+ * A mounted pgboss-dashboard service, extended with the loaded Hono app
+ * once `host.init()` has completed.
  */
 export interface MountedPgBossDashboard
 	extends MountedService<PgBossDashboardConfig> {
-	/**
-	 * The upstream subprocess handle. Populated after `host.init()`.
-	 */
-	subprocess?: DashboardSubprocess;
+	/** The upstream Hono app. Populated after `host.init()`. */
+	app?: Hono;
 }
 
 /**
- * Mounts @pg-boss/dashboard as a futonic service.
+ * Mounts `@pg-boss/dashboard` as a futonic service.
  *
- * On `host.init()`, the dashboard CLI is spawned as a child process bound to
- * a local port. On `host.shutdown()`, the subprocess is terminated.
+ * The upstream package exposes its server only as a side-effecting build that
+ * auto-listens on a TCP port; this wrapper imports the build in-process,
+ * pulls out the underlying Hono app, and closes the stray listener. The host
+ * mounts the service via `createPgBossDashboardRouter`, which forwards
+ * requests to `app.fetch` with no subprocess and no proxy hop.
  *
  * The service does not declare `database: true` because the dashboard opens
- * its own `pg` connections from the configured `databaseURL`; it does not
- * use futonic's shared Kysely instance.
+ * its own `pg` pool from the configured `databaseURL`; it does not use
+ * futonic's shared Kysely instance.
  *
  * @example
  * ```ts
@@ -75,8 +43,6 @@ export interface MountedPgBossDashboard
 export function pgbossDashboard(
 	config: ServiceConfig<PgBossDashboardConfig>,
 ): MountedPgBossDashboard {
-	// Build a fresh MountedService per mount call so each instance has its
-	// own lifecycle closures over its subprocess handle.
 	const service: MountedPgBossDashboard = {
 		id: "pgboss-dashboard",
 		version: "0.1.0",
@@ -92,28 +58,18 @@ export function pgbossDashboard(
 				);
 			}
 
-			service.subprocess = await startDashboardSubprocess({
-				databaseURL: cfg.databaseURL,
-				schema: cfg.schema,
-				auth: cfg.auth,
-				port: cfg.subprocessPort,
-				host: cfg.subprocessHost,
-				binPath: cfg.binPath,
-				stdio: cfg.stdio,
-				startupTimeoutMs: cfg.startupTimeoutMs,
-				logger: ctx.logger,
-			});
+			const loaded = await loadDashboard(cfg, ctx.logger);
+			service.app = loaded.app;
 
-			ctx.logger.info(
-				`pgboss-dashboard proxying ${ctx.hostInfo.mountPath} → ${service.subprocess.origin}`,
-			);
+			ctx.logger.info(`pgboss-dashboard mounted at ${ctx.hostInfo.mountPath}`);
 		},
 
 		async onShutdown() {
-			if (service.subprocess) {
-				await service.subprocess.stop();
-				service.subprocess = undefined;
-			}
+			// Nothing to close — the stray listener was reaped at init time
+			// and the Hono app holds no external resources of its own.
+			// (pg-boss opens Pools per-request inside the dashboard's
+			// loaders, which tear down with the request lifecycle.)
+			service.app = undefined;
 		},
 	};
 
@@ -121,18 +77,37 @@ export function pgbossDashboard(
 }
 
 export interface PgBossDashboardRouter {
-	/** Forward a Request to the upstream dashboard and return its Response. */
-	handler(request: Request): Promise<Response>;
 	/**
-	 * Force-stop the subprocess. Normally redundant because `host.shutdown()`
-	 * already tears it down, but useful for tests that bypass the host.
+	 * Forward a Request to the embedded dashboard's Hono app and return its
+	 * Response. The request path is passed through unchanged — the upstream
+	 * dashboard uses `basename: "/"`, so it expects the path portion after
+	 * your mount prefix to start at `/`.
 	 */
-	stop(): Promise<void>;
+	handler(request: Request): Promise<Response>;
 }
 
 /**
- * Builds an HTTP handler that forwards requests to the dashboard subprocess.
- * Call after `host.init()` once the service has started.
+ * Strips the service's mount prefix off an incoming request URL. The upstream
+ * dashboard routes everything against `/`, so we need to rewrite `/admin/queues/jobs`
+ * to `/jobs` before handing it to `app.fetch`.
+ */
+function stripMountPath(requestUrl: string, mountPath: string): string {
+	let mount = mountPath;
+	if (!mount.startsWith("/")) mount = `/${mount}`;
+	if (mount.length > 1 && mount.endsWith("/")) mount = mount.slice(0, -1);
+
+	const url = new URL(requestUrl);
+	if (url.pathname === mount) {
+		url.pathname = "/";
+	} else if (url.pathname.startsWith(`${mount}/`)) {
+		url.pathname = url.pathname.slice(mount.length);
+	}
+	return url.toString();
+}
+
+/**
+ * Builds a request handler that forwards to the embedded dashboard. Call
+ * after `host.init()` once the upstream has loaded.
  */
 export function createPgBossDashboardRouter(
 	service: MountedPgBossDashboard,
@@ -143,20 +118,21 @@ export function createPgBossDashboardRouter(
 			"pgboss-dashboard service has no serviceContext — did you forget to call host.init()?",
 		);
 	}
-	if (!service.subprocess) {
+	if (!service.app) {
 		throw new Error(
-			"pgboss-dashboard subprocess has not been started. Ensure `host.init()` completed before mounting the router.",
+			"pgboss-dashboard has not been initialised. Ensure `host.init()` completed before mounting the router.",
 		);
 	}
 
-	const subprocess = service.subprocess;
-	const proxy = createDashboardProxy({
-		upstreamOrigin: subprocess.origin,
-		mountPath: ctx.hostInfo.mountPath,
-	});
+	const app = service.app;
+	const mountPath = ctx.hostInfo.mountPath;
 
 	return {
-		handler: proxy,
-		stop: () => subprocess.stop(),
+		async handler(request) {
+			const rewritten = stripMountPath(request.url, mountPath);
+			const innerRequest =
+				rewritten === request.url ? request : new Request(rewritten, request);
+			return app.fetch(innerRequest);
+		},
 	};
 }
