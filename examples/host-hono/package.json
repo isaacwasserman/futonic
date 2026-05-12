@@ -13,6 +13,7 @@
   "dependencies": {
     "futonic": "workspace:*",
     "service-billing": "workspace:*",
+    "service-support": "workspace:*",
     "hono": "^4.7.0"
   },
   "devDependencies": {

@@ -80,7 +80,7 @@ describe("health check", () => {
 		expect(data).toEqual({
 			name: "host-hono",
 			status: "ok",
-			services: ["billing"],
+			services: ["billing", "support"],
 		});
 	});
 });

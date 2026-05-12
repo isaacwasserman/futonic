@@ -6,10 +6,10 @@
   ],
   "scripts": {
     "build": "bun run --cwd packages/futonic build",
-    "test": "bun run --filter futonic test && bun run --filter host-hono test",
-    "typecheck": "bun run --cwd packages/futonic typecheck",
-    "lint": "bun run --cwd packages/futonic lint",
-    "format": "bun run --cwd packages/futonic format"
+    "test": "bun run --filter futonic test && bun run --filter service-support test && bun run --filter host-hono test",
+    "typecheck": "bun run --cwd packages/futonic typecheck && bun run --cwd packages/service-support typecheck",
+    "lint": "bun run --cwd packages/futonic lint && bun run --cwd packages/service-support lint",
+    "format": "bun run --cwd packages/futonic format && bun run --cwd packages/service-support format"
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0"

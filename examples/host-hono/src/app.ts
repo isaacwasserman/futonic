@@ -10,6 +10,12 @@ import { Database } from "bun:sqlite";
 import { createHost, type Host } from "futonic";
 import { billing, createBillingRouter } from "service-billing";
 import { SQLITE_UP } from "service-billing/src/migrations";
+import {
+	support,
+	createSupportRouter,
+	type SupportUser,
+} from "service-support";
+import { SQLITE_UP as SUPPORT_SQL } from "service-support/src/migrations";
 
 export interface App {
 	/** Hono app — call app.fetch(request) to handle a request */
@@ -67,15 +73,31 @@ export async function createApp(dbPath = ":memory:"): Promise<App> {
 	inner.exec("PRAGMA journal_mode = WAL");
 	inner.exec("PRAGMA foreign_keys = ON");
 	inner.exec(SQLITE_UP);
+	inner.exec(SUPPORT_SQL);
 
 	const db = wrapBunSqlite(inner);
 
 	const mounted = billing({ mount: "/api/billing" });
 
+	// The support service delegates user identification back to the host.
+	// This stub reads x-user-id and x-user-role headers; a real host would
+	// pull from its existing session/JWT layer.
+	const mountedSupport = support({
+		mount: "/api/support",
+		config: {
+			identifyUser: (headers) => {
+				const id = headers.get("x-user-id");
+				const role = headers.get("x-user-role");
+				if (!id || (role !== "customer" && role !== "admin")) return null;
+				return { id, role } satisfies SupportUser;
+			},
+		},
+	});
+
 	const host = createHost({
 		database: db,
 		baseURL: "http://localhost",
-		services: [mounted],
+		services: [mounted, mountedSupport],
 	});
 
 	await host.init();
@@ -83,6 +105,11 @@ export async function createApp(dbPath = ":memory:"): Promise<App> {
 	const billingRouter = createBillingRouter(
 		"/api/billing",
 		mounted.serviceContext!,
+	);
+
+	const supportRouter = createSupportRouter(
+		"/api/support",
+		mountedSupport.serviceContext!,
 	);
 
 	const app = new Hono();
@@ -96,6 +123,7 @@ export async function createApp(dbPath = ":memory:"): Promise<App> {
 	);
 
 	app.all("/api/billing/*", (c) => billingRouter.handler(c.req.raw));
+	app.all("/api/support/*", (c) => supportRouter.handler(c.req.raw));
 
 	return {
 		app,

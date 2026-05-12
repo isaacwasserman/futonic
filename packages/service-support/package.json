@@ -1,0 +1,23 @@
+{
+  "name": "service-support",
+  "version": "0.1.0",
+  "description": "Customer support ticket service for futonic — forum-like API with customer and admin flows",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "format": "biome format --write src/"
+  },
+  "dependencies": {
+    "futonic": "workspace:*",
+    "better-call": "^1.0.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
