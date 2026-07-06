@@ -1,49 +1,60 @@
+import type { Endpoint, Middleware } from "better-call";
+import type { DatabaseConnection } from "../db/kysely-factory";
 import type { ServiceDBSchema } from "../db/schema";
 import type { ServiceContext } from "./context";
+import { createServiceRuntime } from "./runtime";
 
 export interface ServiceConfig<TConfig = unknown> {
+	/** HTTP mount path, e.g. "/api/billing". Becomes the better-call router basePath. */
 	mount: string;
-	middleware?: unknown[];
+	/** Driver/dialect the service opens its own Kysely instance from. Required iff the service declares a dbSchema. */
+	database?: DatabaseConnection;
+	/** Absolute base URL surfaced to endpoints via ctx.hostInfo.baseURL. */
+	baseURL?: string;
+	/** Service-specific resolved config, surfaced as ctx.config. */
 	config?: TConfig;
+	/** Call kysely.destroy() on shutdown(). Default true; set false when sharing one connection across services. */
+	destroyDatabaseOnShutdown?: boolean;
 }
 
 export interface EmbeddableService<
 	TConfig = unknown,
 	TSchema extends ServiceDBSchema = ServiceDBSchema,
-	TEndpoints extends Record<string, unknown> = Record<string, unknown>,
+	TEndpoints extends Record<string, Endpoint> = Record<string, Endpoint>,
 > {
 	id: string;
 	version: string;
-	dependencies: {
-		database: boolean;
-	};
+	/** Presence of a schema means the service needs a database. */
 	dbSchema?: TSchema;
-	endpoints: TEndpoints;
+	/** Factory: futonic passes the ServiceContext-injecting middleware; returns the endpoint map. */
+	endpoints: (use: Middleware[]) => TEndpoints;
 	onInit?: (ctx: ServiceContext<TSchema>) => Promise<void>;
-	onReady?: (ctx: ServiceContext<TSchema>) => Promise<void>;
 	onShutdown?: () => Promise<void>;
 }
 
-export interface MountedService<
-	TConfig = unknown,
+/**
+ * The runnable object returned by the service factory. The host calls
+ * init()/handler()/shutdown() on it without ever touching futonic itself.
+ */
+export interface RunnableService<
 	TSchema extends ServiceDBSchema = ServiceDBSchema,
-	TEndpoints extends Record<string, unknown> = Record<string, unknown>,
-> extends EmbeddableService<TConfig, TSchema, TEndpoints> {
-	mountConfig: ServiceConfig<TConfig>;
+> {
+	id: string;
+	version: string;
+	/** Populated once init() resolves; undefined before. */
 	serviceContext?: ServiceContext<TSchema>;
+	init(): Promise<void>;
+	handler(request: Request): Promise<Response>;
+	shutdown(): Promise<void>;
 }
 
 export function createService<
 	TConfig,
 	TSchema extends ServiceDBSchema,
-	TEndpoints extends Record<string, unknown>,
+	TEndpoints extends Record<string, Endpoint>,
 >(
 	definition: EmbeddableService<TConfig, TSchema, TEndpoints>,
-): (
-	config: ServiceConfig<TConfig>,
-) => MountedService<TConfig, TSchema, TEndpoints> {
-	return (config: ServiceConfig<TConfig>) => ({
-		...definition,
-		mountConfig: config,
-	});
+): (config: ServiceConfig<TConfig>) => RunnableService<TSchema> {
+	return (config: ServiceConfig<TConfig>) =>
+		createServiceRuntime(definition, config);
 }

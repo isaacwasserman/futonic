@@ -27,7 +27,7 @@ export interface ServiceContext<
 }
 
 export function createLogger(serviceId: string): Logger {
-	const prefix = `[futonic:${serviceId}]`;
+	const prefix = `[${serviceId}]`;
 	return {
 		info: (msg, ...args) => console.info(prefix, msg, ...args),
 		warn: (msg, ...args) => console.warn(prefix, msg, ...args),

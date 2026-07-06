@@ -9,10 +9,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
 import { createApp, type App } from "./app";
-import { createHost, createService, createServiceMiddleware } from "futonic";
-import { createRouter, createEndpoint } from "better-call";
+import { createService } from "futonic";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -28,6 +26,11 @@ function post(path: string, body: unknown) {
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(body),
 	});
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: response bodies are untyped JSON in e2e tests
+function readJson(res: Response): Promise<any> {
+	return res.json();
 }
 
 function patch(path: string, body: unknown) {
@@ -76,7 +79,7 @@ describe("health check", () => {
 		const res = await instance.app.fetch(req("/"));
 		expect(res.status).toBe(200);
 
-		const data = await res.json();
+		const data = await readJson(res);
 		expect(data).toEqual({
 			name: "host-hono",
 			status: "ok",
@@ -108,7 +111,7 @@ describe("POST /api/billing/invoices", () => {
 		);
 		expect(res.status).toBe(200);
 
-		const invoice = await res.json();
+		const invoice = await readJson(res);
 		assertInvoiceShape(invoice);
 		expect(invoice.customer_id).toBe("cust-1");
 		expect(invoice.amount).toBe(100);
@@ -132,7 +135,7 @@ describe("POST /api/billing/invoices", () => {
 		);
 		expect(res.status).toBe(200);
 
-		const invoice = await res.json();
+		const invoice = await readJson(res);
 		assertInvoiceShape(invoice);
 		expect(invoice.currency).toBe("EUR");
 		expect(invoice.status).toBe("sent");
@@ -144,7 +147,7 @@ describe("POST /api/billing/invoices", () => {
 			post("/api/billing/invoices", { amount: 100 }),
 		);
 		expect(res.status).toBe(400);
-		const body = await res.json();
+		const body = await readJson(res);
 		expect(body.code).toBe("VALIDATION_ERROR");
 	});
 
@@ -163,7 +166,7 @@ describe("POST /api/billing/invoices", () => {
 			}),
 		);
 		expect(res.status).toBe(400);
-		const body = await res.json();
+		const body = await readJson(res);
 		expect(body.code).toBe("VALIDATION_ERROR");
 	});
 
@@ -176,7 +179,7 @@ describe("POST /api/billing/invoices", () => {
 			}),
 		);
 		expect(res.status).toBe(400);
-		const body = await res.json();
+		const body = await readJson(res);
 		expect(body.code).toBe("VALIDATION_ERROR");
 	});
 
@@ -196,7 +199,7 @@ describe("POST /api/billing/invoices", () => {
 					amount: i,
 				}),
 			);
-			const { id } = await res.json();
+			const { id } = await readJson(res);
 			ids.add(id);
 		}
 		expect(ids.size).toBe(5);
@@ -221,7 +224,7 @@ describe("GET /api/billing/invoices", () => {
 		const res = await instance.app.fetch(req("/api/billing/invoices"));
 		expect(res.status).toBe(200);
 
-		const data = await res.json();
+		const data = await readJson(res);
 		expect(data).toEqual({ invoices: [], total: 0 });
 	});
 
@@ -242,7 +245,7 @@ describe("GET /api/billing/invoices", () => {
 		);
 
 		const res = await instance.app.fetch(req("/api/billing/invoices"));
-		const data = await res.json();
+		const data = await readJson(res);
 
 		expect(data.total).toBe(2);
 		expect(data.invoices).toHaveLength(2);
@@ -277,7 +280,7 @@ describe("GET /api/billing/invoices", () => {
 		const draftRes = await instance.app.fetch(
 			req("/api/billing/invoices?status=draft"),
 		);
-		const drafts = await draftRes.json();
+		const drafts = await readJson(draftRes);
 		expect(drafts.total).toBe(2);
 		expect(
 			drafts.invoices.every(
@@ -288,7 +291,7 @@ describe("GET /api/billing/invoices", () => {
 		const paidRes = await instance.app.fetch(
 			req("/api/billing/invoices?status=paid"),
 		);
-		const paid = await paidRes.json();
+		const paid = await readJson(paidRes);
 		expect(paid.total).toBe(1);
 		expect(paid.invoices[0].customer_id).toBe("b");
 	});
@@ -304,7 +307,7 @@ describe("GET /api/billing/invoices", () => {
 		const res = await instance.app.fetch(
 			req("/api/billing/invoices?status=void"),
 		);
-		const data = await res.json();
+		const data = await readJson(res);
 		expect(data).toEqual({ invoices: [], total: 0 });
 	});
 });
@@ -330,14 +333,14 @@ describe("GET /api/billing/invoices/:id", () => {
 				amount: 100,
 			}),
 		);
-		const { id } = await createRes.json();
+		const { id } = await readJson(createRes);
 
 		const res = await instance.app.fetch(
 			req(`/api/billing/invoices/${id}`),
 		);
 		expect(res.status).toBe(200);
 
-		const invoice = await res.json();
+		const invoice = await readJson(res);
 		assertInvoiceShape(invoice, ["line_items"]);
 		expect(invoice.id).toBe(id);
 		expect(invoice.line_items).toEqual([]);
@@ -349,7 +352,7 @@ describe("GET /api/billing/invoices/:id", () => {
 		);
 		expect(res.status).toBe(404);
 
-		const data = await res.json();
+		const data = await readJson(res);
 		expect(data).toEqual({ error: "Invoice not found" });
 	});
 });
@@ -376,14 +379,14 @@ describe("PATCH /api/billing/invoices/:id", () => {
 				currency: "EUR",
 			}),
 		);
-		const { id } = await createRes.json();
+		const { id } = await readJson(createRes);
 
 		const patchRes = await instance.app.fetch(
 			patch(`/api/billing/invoices/${id}`, { status: "paid" }),
 		);
 		expect(patchRes.status).toBe(200);
 
-		const updated = await patchRes.json();
+		const updated = await readJson(patchRes);
 		expect(updated.status).toBe("paid");
 		expect(updated.amount).toBe(100); // unchanged
 		expect(updated.currency).toBe("EUR"); // unchanged
@@ -392,7 +395,7 @@ describe("PATCH /api/billing/invoices/:id", () => {
 		const getRes = await instance.app.fetch(
 			req(`/api/billing/invoices/${id}`),
 		);
-		const fetched = await getRes.json();
+		const fetched = await readJson(getRes);
 		expect(fetched.status).toBe("paid");
 		expect(fetched.amount).toBe(100);
 	});
@@ -412,7 +415,7 @@ describe("PATCH /api/billing/invoices/:id", () => {
 				amount: 1,
 			}),
 		);
-		const { id } = await createRes.json();
+		const { id } = await readJson(createRes);
 
 		const res = await instance.app.fetch(
 			patch(`/api/billing/invoices/${id}`, { status: "invalid" }),
@@ -442,13 +445,13 @@ describe("DELETE /api/billing/invoices/:id", () => {
 				amount: 100,
 			}),
 		);
-		const { id } = await createRes.json();
+		const { id } = await readJson(createRes);
 
 		const delRes = await instance.app.fetch(
 			del(`/api/billing/invoices/${id}`),
 		);
 		expect(delRes.status).toBe(200);
-		expect(await delRes.json()).toEqual({ ok: true });
+		expect(await readJson(delRes)).toEqual({ ok: true });
 
 		// Verify it's gone
 		const getRes = await instance.app.fetch(
@@ -460,7 +463,7 @@ describe("DELETE /api/billing/invoices/:id", () => {
 		const listRes = await instance.app.fetch(
 			req("/api/billing/invoices"),
 		);
-		const data = await listRes.json();
+		const data = await readJson(listRes);
 		expect(data.total).toBe(0);
 	});
 
@@ -469,7 +472,7 @@ describe("DELETE /api/billing/invoices/:id", () => {
 			del("/api/billing/invoices/nonexistent"),
 		);
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({ ok: true });
+		expect(await readJson(res)).toEqual({ ok: true });
 	});
 });
 
@@ -496,7 +499,7 @@ describe("full invoice lifecycle", () => {
 			}),
 		);
 		expect(createRes.status).toBe(200);
-		const created = await createRes.json();
+		const created = await readJson(createRes);
 		assertInvoiceShape(created);
 		const id = created.id;
 
@@ -504,7 +507,7 @@ describe("full invoice lifecycle", () => {
 		const listRes = await instance.app.fetch(
 			req("/api/billing/invoices"),
 		);
-		const listed = await listRes.json();
+		const listed = await readJson(listRes);
 		expect(listed.total).toBe(1);
 		expect(listed.invoices[0].id).toBe(id);
 
@@ -521,7 +524,7 @@ describe("full invoice lifecycle", () => {
 		const getRes = await instance.app.fetch(
 			req(`/api/billing/invoices/${id}`),
 		);
-		const fetched = await getRes.json();
+		const fetched = await readJson(getRes);
 		assertInvoiceShape(fetched, ["line_items"]);
 		expect(fetched.status).toBe("paid");
 		expect(fetched.amount).toBe(84);
@@ -537,7 +540,7 @@ describe("full invoice lifecycle", () => {
 		const finalList = await instance.app.fetch(
 			req("/api/billing/invoices"),
 		);
-		expect(await finalList.json()).toEqual({ invoices: [], total: 0 });
+		expect(await readJson(finalList)).toEqual({ invoices: [], total: 0 });
 	});
 });
 
@@ -570,7 +573,7 @@ describe("concurrent requests", () => {
 		expect(results.every((r) => r.status === 200)).toBe(true);
 
 		const invoices = await Promise.all(
-			results.map((r) => r.json()),
+			results.map((r) => readJson(r)),
 		);
 		const ids = new Set(invoices.map((inv) => inv.id));
 		expect(ids.size).toBe(10);
@@ -579,141 +582,16 @@ describe("concurrent requests", () => {
 		const listRes = await instance.app.fetch(
 			req("/api/billing/invoices"),
 		);
-		const data = await listRes.json();
+		const data = await readJson(listRes);
 		expect(data.total).toBe(10);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Multi-service isolation
-//
-// The core value prop of futonic is table prefixing. Two services with the
-// same table names must not collide.
+// Service lifecycle
 // ---------------------------------------------------------------------------
 
-describe("multi-service table isolation", () => {
-	test("two services with same table name don't collide", async () => {
-		const schema = {
-			tables: {
-				items: {
-					fields: {
-						id: {
-							type: "string" as const,
-							primaryKey: true,
-							required: true,
-						},
-						name: { type: "string" as const, required: true },
-					},
-				},
-			},
-		};
-
-		const serviceA = createService({
-			id: "alpha",
-			version: "1.0.0",
-			dependencies: { database: true },
-			dbSchema: schema,
-			endpoints: {},
-		});
-
-		const serviceB = createService({
-			id: "beta",
-			version: "1.0.0",
-			dependencies: { database: true },
-			dbSchema: schema,
-			endpoints: {},
-		});
-
-		const { Database: BunDB } = await import("bun:sqlite");
-		const inner = new BunDB(":memory:");
-
-		// Create both prefixed tables
-		inner.exec(
-			"CREATE TABLE alpha_items (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
-		);
-		inner.exec(
-			"CREATE TABLE beta_items (id TEXT PRIMARY KEY, name TEXT NOT NULL)",
-		);
-
-		// Need the bun:sqlite proxy wrapper for Kysely compatibility
-		const { wrapBunSqlite } = await import("./app");
-
-		const db = wrapBunSqlite(inner);
-
-		const host = createHost({
-			database: db,
-			services: [
-				serviceA({ mount: "/api/alpha" }),
-				serviceB({ mount: "/api/beta" }),
-			],
-		});
-
-		await host.init();
-
-		const mountedA = host.services.get("alpha")!;
-		const mountedB = host.services.get("beta")!;
-
-		// Write to alpha's items table
-		await mountedA.serviceContext!.db.items.create({
-			id: "a1",
-			name: "alpha-item",
-		});
-
-		// Write to beta's items table
-		await mountedB.serviceContext!.db.items.create({
-			id: "b1",
-			name: "beta-item",
-		});
-
-		// Each service only sees its own data
-		const alphaItems = await mountedA.serviceContext!.db.items.findMany();
-		expect(alphaItems).toHaveLength(1);
-		expect(alphaItems[0]!.name).toBe("alpha-item");
-
-		const betaItems = await mountedB.serviceContext!.db.items.findMany();
-		expect(betaItems).toHaveLength(1);
-		expect(betaItems[0]!.name).toBe("beta-item");
-
-		// Verify at the raw SQL level — different physical tables
-		const rawAlpha = inner
-			.query("SELECT * FROM alpha_items")
-			.all() as any[];
-		const rawBeta = inner
-			.query("SELECT * FROM beta_items")
-			.all() as any[];
-		expect(rawAlpha).toHaveLength(1);
-		expect(rawBeta).toHaveLength(1);
-		expect(rawAlpha[0].name).toBe("alpha-item");
-		expect(rawBeta[0].name).toBe("beta-item");
-
-		await host.shutdown();
-		inner.close();
-	});
-
-	test("duplicate service IDs throw at host creation", () => {
-		const service = createService({
-			id: "duplicate",
-			version: "1.0.0",
-			dependencies: { database: false },
-			endpoints: {},
-		});
-
-		expect(() =>
-			createHost({
-				services: [
-					service({ mount: "/a" }),
-					service({ mount: "/b" }),
-				],
-			}),
-		).toThrow("Namespace collision");
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Host lifecycle
-// ---------------------------------------------------------------------------
-
-describe("host lifecycle", () => {
+describe("service lifecycle", () => {
 	test("shutdown tears down cleanly", async () => {
 		const instance = await createApp();
 
@@ -734,36 +612,45 @@ describe("host lifecycle", () => {
 		expect(res2.status).toBe(500);
 	});
 
-	test("host without database works for db-free services", async () => {
+	test("service without db schema inits without a database", async () => {
 		const noDbService = createService({
 			id: "ping",
 			version: "1.0.0",
-			dependencies: { database: false },
-			endpoints: {},
+			endpoints: () => ({}),
 		});
 
-		const host = createHost({
-			services: [noDbService({ mount: "/ping" })],
-		});
+		const svc = noDbService({ mount: "/ping" });
 
-		// Should init without error — no database needed
-		await host.init();
-		expect(host.services.has("ping")).toBe(true);
-		await host.shutdown();
+		// No dbSchema → no database needed → init resolves cleanly.
+		await svc.init();
+		expect(svc.id).toBe("ping");
+		await svc.shutdown();
 	});
 
-	test("host throws if service needs db but none provided", () => {
+	test("init rejects if service needs a db but none provided", () => {
 		const dbService = createService({
 			id: "needs-db",
 			version: "1.0.0",
-			dependencies: { database: true },
-			endpoints: {},
+			dbSchema: {
+				tables: {
+					items: {
+						fields: {
+							id: {
+								type: "string" as const,
+								primaryKey: true,
+								required: true,
+							},
+							name: { type: "string" as const, required: true },
+						},
+					},
+				},
+			},
+			endpoints: () => ({}),
 		});
 
-		const host = createHost({
-			services: [dbService({ mount: "/x" })],
-		});
+		const svc = dbService({ mount: "/x" });
 
-		expect(host.init()).rejects.toThrow("no database connection");
+		// dbSchema present but no `database` in config → init() rejects.
+		expect(svc.init()).rejects.toThrow("no database connection");
 	});
 });

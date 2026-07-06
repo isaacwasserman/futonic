@@ -7,12 +7,12 @@
 
 import { createApp } from "./app";
 
-const { app, host, close } = await createApp("host.db");
+const { app, svc, close } = await createApp("host.db");
 
 const port = Number(process.env.PORT) || 3000;
 
 console.log(`\n  host-hono listening on http://localhost:${port}`);
-console.log(`  Mounted services: ${Array.from(host.services.keys()).join(", ")}\n`);
+console.log(`  Mounted service: ${svc.id}\n`);
 
 const server = Bun.serve({
 	port,

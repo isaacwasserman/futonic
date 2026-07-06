@@ -2,11 +2,9 @@
 export { createService } from "./core/service";
 export type {
 	EmbeddableService,
-	MountedService,
+	RunnableService,
 	ServiceConfig,
 } from "./core/service";
-export { createHost } from "./core/host";
-export type { HostConfig, Host } from "./core/host";
 export type {
 	ServiceContext,
 	Logger,
@@ -19,16 +17,11 @@ export type {
 	ServiceDBSchema,
 	TableDefinition,
 	FieldDefinition,
-	PrefixedTable,
 } from "./db/schema";
-export { getServiceTables, prefixTableName } from "./db/schema";
+export type { DatabaseConnection } from "./db/kysely-factory";
 export type {
 	InternalAdapter,
 	TableAdapter,
 	FindManyOptions,
 	Where,
 } from "./db/internal-adapter";
-
-// Router
-export { createServiceEndpoint } from "./router/endpoint";
-export { createServiceMiddleware } from "./router/middleware";

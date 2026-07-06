@@ -1,31 +1,27 @@
 /**
  * service-billing — an example futonic tenant service.
  *
- * This is what a service author publishes as an npm package.
- * Host applications install it and mount it via `createHost()`.
+ * This is what a service author publishes as an npm package. Host applications
+ * install it and run it directly — they never import "futonic" themselves:
+ *
+ * ```ts
+ * const svc = billing({ database, mount: "/api/billing" });
+ * await svc.init();
+ * app.all("/api/billing/*", (c) => svc.handler(c.req.raw));
+ * ```
  */
 
-import { createService, createServiceMiddleware } from "futonic";
-import { createRouter } from "better-call";
-import { billingSchema } from "./schema";
+import { createService } from "futonic";
 import { createBillingEndpoints } from "./endpoints";
-
-// ---------------------------------------------------------------------------
-// Service definition
-// ---------------------------------------------------------------------------
+import { billingSchema } from "./schema";
 
 export const billing = createService({
 	id: "billing",
 	version: "0.1.0",
-	dependencies: { database: true },
 	dbSchema: billingSchema,
-	endpoints: {},
+	endpoints: createBillingEndpoints,
 
 	async onInit(ctx) {
-		ctx.logger.info("Billing service initialized");
-	},
-
-	async onReady(ctx) {
 		ctx.logger.info("Billing service ready");
 	},
 
@@ -33,19 +29,6 @@ export const billing = createService({
 		console.log("[billing] Shutting down");
 	},
 });
-
-// ---------------------------------------------------------------------------
-// Router factory — creates a better-call router wired to a ServiceContext.
-//
-// The host calls this after init to get a router it can mount into its
-// HTTP framework (Hono, Express, Next.js, etc.).
-// ---------------------------------------------------------------------------
-
-export function createBillingRouter(mountPath: string, serviceContext: unknown) {
-	const middleware = createServiceMiddleware(serviceContext as any);
-	const endpoints = createBillingEndpoints([middleware]);
-	return createRouter(endpoints, { basePath: mountPath });
-}
 
 // Re-export schema for host applications that want to generate migrations
 export { billingSchema } from "./schema";
