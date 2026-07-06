@@ -30,13 +30,13 @@ jobs:
         working-directory: packages/futonic
         run: |
           SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          CANARY_VERSION="0.0.0-canary.${SHA}"
           bun -e "
             const pkg = await Bun.file('package.json').json();
-            pkg.version = '${CANARY_VERSION}';
+            const [major, minor, patch] = pkg.version.split('-')[0].split('.').map(Number);
+            pkg.version = major + '.' + minor + '.' + (patch + 1) + '-canary.${SHA}';
             await Bun.write('package.json', JSON.stringify(pkg, null, '\t') + '\n');
+            console.log('Published version: ' + pkg.version);
           "
-          echo "Published version: ${CANARY_VERSION}"
 
       - uses: actions/setup-node@v4
         with:
