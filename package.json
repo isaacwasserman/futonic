@@ -1,5 +1,9 @@
 {
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/isaacwasserman/futonic.git"
+  },
   "workspaces": [
     "packages/*",
     "examples/*"
