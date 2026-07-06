@@ -2,11 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { createService } from "./service";
 
 describe("createService", () => {
-	test("returns a factory function that produces a MountedService", () => {
+	test("returns a factory that produces a runnable service", () => {
 		const factory = createService({
 			id: "billing",
 			version: "0.1.0",
-			dependencies: { database: true },
 			dbSchema: {
 				tables: {
 					invoices: {
@@ -17,15 +16,16 @@ describe("createService", () => {
 					},
 				},
 			},
-			endpoints: {},
+			endpoints: () => ({}),
 		});
 
-		const mounted = factory({ mount: "/api/billing" });
+		const svc = factory({ mount: "/api/billing" });
 
-		expect(mounted.id).toBe("billing");
-		expect(mounted.version).toBe("0.1.0");
-		expect(mounted.mountConfig.mount).toBe("/api/billing");
-		expect(mounted.dependencies.database).toBe(true);
-		expect(mounted.dbSchema?.tables.invoices).toBeDefined();
+		expect(svc.id).toBe("billing");
+		expect(svc.version).toBe("0.1.0");
+		expect(typeof svc.init).toBe("function");
+		expect(typeof svc.handler).toBe("function");
+		expect(typeof svc.shutdown).toBe("function");
+		expect(svc.serviceContext).toBeUndefined();
 	});
 });

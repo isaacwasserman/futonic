@@ -1,22 +1,26 @@
 /**
- * App factory — creates the Hono app, database, and futonic host.
+ * App factory — creates the Hono app, database, and the billing service.
  *
  * Separated from index.ts so e2e tests can spin up isolated instances
  * with in-memory SQLite without starting a real TCP server.
+ *
+ * Note the host never imports "futonic" — it only knows about `service-billing`.
  */
 
-import { Hono } from "hono";
 import { Database } from "bun:sqlite";
-import { createHost, type Host } from "futonic";
-import { billing, createBillingRouter } from "service-billing";
+import { Hono } from "hono";
+import { billing } from "service-billing";
 import { SQLITE_UP } from "service-billing/src/migrations";
+
+/** The billing service instance type, without importing futonic directly. */
+export type BillingService = ReturnType<typeof billing>;
 
 export interface App {
 	/** Hono app — call app.fetch(request) to handle a request */
 	app: Hono;
-	/** Futonic host — manages service lifecycle */
-	host: Host;
-	/** Tear down the host and close the database */
+	/** The mounted billing service */
+	svc: BillingService;
+	/** Tear down the service and close the database */
 	close(): Promise<void>;
 }
 
@@ -40,11 +44,9 @@ export function wrapBunSqlite(inner: Database) {
 
 					return new Proxy(stmt, {
 						get(stmtTarget, stmtProp) {
-							if (stmtProp === "reader")
-								return isReader || hasReturning;
+							if (stmtProp === "reader") return isReader || hasReturning;
 							const val = (stmtTarget as any)[stmtProp];
-							if (typeof val === "function")
-								return val.bind(stmtTarget);
+							if (typeof val === "function") return val.bind(stmtTarget);
 							return val;
 						},
 					});
@@ -70,20 +72,13 @@ export async function createApp(dbPath = ":memory:"): Promise<App> {
 
 	const db = wrapBunSqlite(inner);
 
-	const mounted = billing({ mount: "/api/billing" });
-
-	const host = createHost({
+	const svc = billing({
 		database: db,
+		mount: "/api/billing",
 		baseURL: "http://localhost",
-		services: [mounted],
 	});
 
-	await host.init();
-
-	const billingRouter = createBillingRouter(
-		"/api/billing",
-		mounted.serviceContext!,
-	);
+	await svc.init();
 
 	const app = new Hono();
 
@@ -91,17 +86,17 @@ export async function createApp(dbPath = ":memory:"): Promise<App> {
 		c.json({
 			name: "host-hono",
 			status: "ok",
-			services: Array.from(host.services.keys()),
+			services: [svc.id],
 		}),
 	);
 
-	app.all("/api/billing/*", (c) => billingRouter.handler(c.req.raw));
+	app.all("/api/billing/*", (c) => svc.handler(c.req.raw));
 
 	return {
 		app,
-		host,
+		svc,
 		async close() {
-			await host.shutdown();
+			await svc.shutdown();
 			inner.close();
 		},
 	};

@@ -19,7 +19,6 @@ export interface Where {
 	field: string;
 	value: unknown;
 	operator?: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "not_in";
-	connector?: "AND" | "OR";
 }
 
 export type FilterOp =

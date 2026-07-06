@@ -12,7 +12,7 @@ import { Kysely, MysqlDialect, PostgresDialect, SqliteDialect } from "kysely";
 export type KyselyDatabaseType = "sqlite" | "mysql" | "postgres";
 
 /**
- * The host passes one of these to `createHost({ database: ... })`.
+ * The host passes one of these as the service's `database` config.
  *
  * Accepted forms:
  * - A Kysely `Dialect` instance (most explicit)

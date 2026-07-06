@@ -4,23 +4,12 @@ console.log("[futonic] Building...");
 
 await $`rm -rf dist`;
 await Bun.build({
-	entrypoints: [
-		"src/index.ts",
-		"src/client/index.ts",
-		"src/cli/index.ts",
-	],
+	entrypoints: ["src/index.ts", "src/client/index.ts"],
 	outdir: "dist",
 	target: "node",
 	format: "esm",
 	splitting: true,
-	external: [
-		"better-call",
-		"kysely",
-		"pg",
-		"mysql2",
-		"better-sqlite3",
-		"@mrleebo/prisma-ast",
-	],
+	external: ["better-call", "kysely", "pg", "mysql2", "better-sqlite3"],
 });
 
 // Generate declarations

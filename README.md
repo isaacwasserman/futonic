@@ -76,12 +76,11 @@ A service defines its database tables and API endpoints. The service author publ
 ```typescript
 // @acme/billing
 
-import { createService, createEndpoint } from "futonic";
+import { createService } from "futonic";
 
 export const billing = createService({
   id: "billing",
   version: "0.1.0",
-  dependencies: { database: true },
   dbSchema: {
     tables: {
       invoices: {
@@ -93,12 +92,15 @@ export const billing = createService({
       },
     },
   },
+  endpoints: createBillingEndpoints, // the endpoints factory, defined below
 });
 ```
 
-Endpoints receive a `ServiceContext` via middleware — giving them scoped access to the service's database tables, config, and logger:
+Endpoints are an `(use) => endpoints` factory. Futonic passes in the middleware that injects a `ServiceContext` — giving each endpoint scoped access to the service's database tables, config, and logger:
 
 ```typescript
+import { createEndpoint, type Middleware } from "better-call";
+
 export function createBillingEndpoints(use: Middleware[]) {
   return {
     createInvoice: createEndpoint(
@@ -122,35 +124,32 @@ The endpoint writes to `svc.db.invoices`, but the actual table in the database i
 
 ### How the host mounts it
 
-The host developer installs the service and wires it in. Futonic auto-detects the database driver — `pg`, `mysql2`, `better-sqlite3`, or `bun:sqlite`:
+The host developer installs the service and runs it — they never import futonic themselves. Futonic auto-detects the database driver — `pg`, `mysql2`, `better-sqlite3`, or `bun:sqlite`:
 
 ```typescript
-import { createHost } from "futonic";
-import { billing, createBillingRouter } from "@acme/billing";
+import { billing } from "@acme/billing";
 
-const host = createHost({
+const svc = billing({
   database: pool,  // Their existing pg.Pool, mysql2 pool, or sqlite instance
+  mount: "/api/billing",
   baseURL: "http://localhost:3000",
-  services: [
-    billing({ mount: "/api/billing" }),
-  ],
 });
 
-await host.init();
+await svc.init();
 ```
 
-Then a single catch-all route in their framework of choice:
+Then a single catch-all route in their framework of choice — `svc.handler` is a web-standard `(Request) => Response` handler:
 
 ```typescript
 // Hono
-app.all("/api/billing/*", (c) => billingRouter.handler(c.req.raw));
+app.all("/api/billing/*", (c) => svc.handler(c.req.raw));
 
 // Next.js — app/api/billing/[...path]/route.ts
-import { toNextJsHandler } from "futonic/next";
-export const { GET, POST, PUT, DELETE, PATCH } = toNextJsHandler(billingRouter);
+const handler = (req: Request) => svc.handler(req);
+export { handler as GET, handler as POST, handler as PUT, handler as DELETE, handler as PATCH };
 ```
 
-That's it. The billing service handles requests at `/api/billing/*`, stores data in the host's database under prefixed tables, and the host didn't need to understand any of the service's internals to set it up.
+That's it. The billing service handles requests at `/api/billing/*`, stores data in the host's database under prefixed tables, and the host never had to know futonic was involved — it just installed `@acme/billing` and ran it. On teardown, `await svc.shutdown()`.
 
 ## More features
 
@@ -160,9 +159,9 @@ Host developers consume your service from their frontend with a fully typed clie
 
 ```typescript
 import { createClient } from "futonic/client";
-import type { BillingRouter } from "@acme/billing";
+import type { BillingApi } from "@acme/billing";
 
-const billing = createClient<BillingRouter>({
+const billing = createClient<BillingApi>({
   baseURL: "/api/billing",
 });
 
@@ -177,19 +176,12 @@ const { data: invoice } = await billing.createInvoice({
 When the host's backend code needs to call the service, there's no HTTP round-trip. The service runs in the same process, shares the same database connection pool, and returns results directly:
 
 ```typescript
-const svc = host.services.get("billing").serviceContext!;
-const invoices = await svc.db.invoices.findMany();
+const invoices = await svc.serviceContext!.db.invoices.findMany();
 ```
 
-### Generate migrations for any ORM
+### Bring your own migrations
 
-Ship a CLI so your users can generate migration files for their ORM of choice:
-
-```bash
-npx @acme/billing generate --orm=drizzle --provider=pg --out=schema.ts
-npx @acme/billing generate --orm=prisma --provider=mysql
-npx @acme/billing generate --orm=kysely --provider=sqlite
-```
+A service declares its tables in `dbSchema`, and exports that schema from its package. The host creates the matching prefixed tables (e.g. `billing_invoices`) with whatever migration tooling it already uses — futonic doesn't impose one.
 
 ### Return any web standard response
 

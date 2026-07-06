@@ -17,10 +17,6 @@
     "./client": {
       "import": "./dist/client/index.js",
       "types": "./dist/client/index.d.ts"
-    },
-    "./cli": {
-      "import": "./dist/cli/index.js",
-      "types": "./dist/cli/index.d.ts"
     }
   },
   "scripts": {
@@ -43,9 +39,6 @@
     "better-sqlite3": "^11.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0"
-  },
-  "optionalDependencies": {
-    "@mrleebo/prisma-ast": "^0.12.0"
   },
   "peerDependencies": {
     "pg": ">=8.0.0",
