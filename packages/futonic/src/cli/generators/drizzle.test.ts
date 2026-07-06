@@ -48,7 +48,7 @@ const tables = new Map<string, PrefixedTable>([
 					type: "string",
 					required: true,
 					references: {
-						model: "billing_invoices",
+						model: "invoices",
 						field: "id",
 						onDelete: "cascade",
 					},

@@ -82,7 +82,7 @@ describe("tableToSQL", () => {
 			"pg",
 		);
 		expect(sql).toContain(
-			"FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE",
+			"FOREIGN KEY (user_id) REFERENCES billing_user(id) ON DELETE CASCADE",
 		);
 	});
 

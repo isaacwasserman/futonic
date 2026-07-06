@@ -10,7 +10,7 @@ export const billing_invoices = pgTable("billing_invoices", {
   is_recurring: boolean("is_recurring"),
   metadata: jsonb("metadata"),
   created_at: timestamp("created_at").notNull(),
-  user_id: text("user_id").notNull().references(() => user.id, { onDelete: 'cascade' })
+  user_id: text("user_id").notNull().references(() => billing_user.id, { onDelete: 'cascade' })
 });
 
 export const billing_line_items = pgTable("billing_line_items", {
@@ -35,7 +35,7 @@ export const billing_invoices = mysqlTable("billing_invoices", {
   is_recurring: boolean("is_recurring"),
   metadata: json("metadata"),
   created_at: timestamp("created_at", { fsp: 3 }).notNull(),
-  user_id: varchar("user_id", { length: 36 }).notNull().references(() => user.id, { onDelete: 'cascade' })
+  user_id: varchar("user_id", { length: 36 }).notNull().references(() => billing_user.id, { onDelete: 'cascade' })
 });
 
 export const billing_line_items = mysqlTable("billing_line_items", {
@@ -60,7 +60,7 @@ export const billing_invoices = sqliteTable("billing_invoices", {
   is_recurring: integer("is_recurring", { mode: 'boolean' }),
   metadata: text("metadata", { mode: "json" }),
   created_at: integer("created_at", { mode: 'timestamp_ms' }).notNull(),
-  user_id: text("user_id").notNull().references(() => user.id, { onDelete: 'cascade' })
+  user_id: text("user_id").notNull().references(() => billing_user.id, { onDelete: 'cascade' })
 });
 
 export const billing_line_items = sqliteTable("billing_line_items", {

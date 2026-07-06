@@ -7,7 +7,12 @@
  * Access tables via property name: `db.invoices.create({ ... })`.
  */
 
-import type { Kysely } from "kysely";
+import type {
+	ExpressionBuilder,
+	ExpressionWrapper,
+	Kysely,
+	SqlBool,
+} from "kysely";
 import { type ServiceDBSchema, prefixTableName } from "./schema";
 
 export interface Where {
@@ -17,8 +22,32 @@ export interface Where {
 	connector?: "AND" | "OR";
 }
 
+export type FilterOp =
+	| "eq"
+	| "ne"
+	| "gt"
+	| "gte"
+	| "lt"
+	| "lte"
+	| "in"
+	| "not_in"
+	| "contains"
+	| "startsWith"
+	| "endsWith"
+	| "isNull"
+	| "isNotNull";
+
+export type FilterNode =
+	| { type: "and" | "or"; nodes: FilterNode[] }
+	| { type: "not"; node: FilterNode }
+	| { type: "cond"; field: string; op: FilterOp; value?: unknown };
+
 export interface FindManyOptions {
 	where?: Where[];
+	/** Boolean expression tree (supports and/or/not + contains/like); combined with `where`. */
+	filter?: FilterNode;
+	/** Column projection; when omitted selects all columns. */
+	select?: string[];
 	limit?: number;
 	offset?: number;
 	sortBy?: { field: string; direction: "asc" | "desc" };
@@ -28,7 +57,9 @@ export interface TableAdapter {
 	create(data: Record<string, unknown>): Promise<Record<string, unknown>>;
 	findOne(where: Where[]): Promise<Record<string, unknown> | null>;
 	findMany(options?: FindManyOptions): Promise<Record<string, unknown>[]>;
-	count(where?: Where[]): Promise<number>;
+	count(
+		where?: Where[] | { where?: Where[]; filter?: FilterNode },
+	): Promise<number>;
 	update(
 		where: Where[],
 		data: Record<string, unknown>,
@@ -113,6 +144,72 @@ function applyWhere<
 	return query;
 }
 
+/**
+ * Recursively compiles a FilterNode boolean expression tree into a Kysely
+ * expression, using the query's ExpressionBuilder for and/or/not composition.
+ */
+function buildFilter(
+	eb: ExpressionBuilder<Record<string, unknown>, string>,
+	node: FilterNode | undefined,
+): ExpressionWrapper<Record<string, unknown>, string, SqlBool> {
+	if (!node) return eb.lit(true) as never;
+	switch (node.type) {
+		case "and":
+			return (
+				node.nodes.length
+					? eb.and(node.nodes.map((n) => buildFilter(eb, n)))
+					: eb.lit(true)
+			) as never;
+		case "or":
+			return (
+				node.nodes.length
+					? eb.or(node.nodes.map((n) => buildFilter(eb, n)))
+					: eb.lit(false)
+			) as never;
+		case "not":
+			return eb.not(buildFilter(eb, node.node)) as never;
+		case "cond": {
+			const { field, op, value } = node;
+			const c = (sqlOp: string, val: unknown) =>
+				eb(field as never, sqlOp as never, val as never) as never;
+			switch (op) {
+				case "eq":
+					return value === null ? c("is", null) : c("=", value);
+				case "ne":
+					return value === null ? c("is not", null) : c("<>", value);
+				case "gt":
+					return c(">", value);
+				case "gte":
+					return c(">=", value);
+				case "lt":
+					return c("<", value);
+				case "lte":
+					return c("<=", value);
+				case "in":
+					return c("in", value);
+				case "not_in":
+					return c("not in", value);
+				case "contains":
+					return c("like", `%${value}%`);
+				case "startsWith":
+					return c("like", `${value}%`);
+				case "endsWith":
+					return c("like", `%${value}`);
+				case "isNull":
+					return c("is", null);
+				case "isNotNull":
+					return c("is not", null);
+				default:
+					throw new Error(`Unsupported filter op: ${op}`);
+			}
+		}
+		default:
+			throw new Error(
+				`Unknown filter node type: ${(node as { type: string }).type}`,
+			);
+	}
+}
+
 function createTableAdapter(
 	kysely: Kysely<Record<string, unknown>>,
 	tableName: string,
@@ -135,10 +232,18 @@ function createTableAdapter(
 		},
 
 		async findMany(options) {
-			let query = kysely.selectFrom(tableName).selectAll();
+			let query = options?.select?.length
+				? kysely.selectFrom(tableName).select(options.select as never)
+				: kysely.selectFrom(tableName).selectAll();
 
 			if (options?.where) {
 				query = applyWhere(query as never, options.where) as typeof query;
+			}
+
+			if (options?.filter) {
+				query = query.where((eb) =>
+					buildFilter(eb as never, options.filter),
+				) as typeof query;
 			}
 
 			if (options?.sortBy) {
@@ -164,8 +269,17 @@ function createTableAdapter(
 				.selectFrom(tableName)
 				.select(kysely.fn.count("id" as never).as("count"));
 
-			if (where) {
-				query = applyWhere(query as never, where) as typeof query;
+			const whereArr = Array.isArray(where) ? where : where?.where;
+			const filter = Array.isArray(where) ? undefined : where?.filter;
+
+			if (whereArr) {
+				query = applyWhere(query as never, whereArr) as typeof query;
+			}
+
+			if (filter) {
+				query = query.where((eb) =>
+					buildFilter(eb as never, filter),
+				) as typeof query;
 			}
 
 			const res = await query.execute();
