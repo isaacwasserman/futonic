@@ -80,7 +80,8 @@ function generateTable(
 			if (field.references) {
 				const onDelete = field.references.onDelete || "cascade";
 				const action = onDelete === "set-null" ? "set null" : onDelete;
-				col += `.references(() => ${field.references.model}.${field.references.field}, { onDelete: '${action}' })`;
+				const referencedTable = `${table.serviceId}_${field.references.model}`;
+				col += `.references(() => ${referencedTable}.${field.references.field}, { onDelete: '${action}' })`;
 			}
 
 			return `  ${fieldName}: ${col}`;

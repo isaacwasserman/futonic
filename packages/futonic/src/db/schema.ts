@@ -1,7 +1,7 @@
 import type { MountedService } from "../core/service";
 
 export interface FieldDefinition {
-	type: "string" | "number" | "boolean" | "date" | "json";
+	type: "string" | "number" | "boolean" | "date" | "json" | "binary";
 	required?: boolean;
 	unique?: boolean;
 	primaryKey?: boolean;

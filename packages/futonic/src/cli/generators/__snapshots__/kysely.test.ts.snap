@@ -9,7 +9,7 @@ exports[`generateKyselySchema generates correct pg DDL 1`] = `
   metadata JSONB,
   created_at TIMESTAMP NOT NULL,
   user_id TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES billing_user(id) ON DELETE CASCADE
 );"
 `;
 
@@ -22,7 +22,7 @@ exports[`generateKyselySchema generates correct mysql DDL 1`] = `
   metadata JSON,
   created_at TIMESTAMP NOT NULL,
   user_id VARCHAR(255) NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES billing_user(id) ON DELETE CASCADE
 );"
 `;
 
@@ -35,6 +35,6 @@ exports[`generateKyselySchema generates correct sqlite DDL 1`] = `
   metadata TEXT,
   created_at INTEGER NOT NULL,
   user_id TEXT NOT NULL,
-  FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES billing_user(id) ON DELETE CASCADE
 );"
 `;

@@ -51,8 +51,9 @@ export function tableToSQL(
 			const onDelete = field.references.onDelete ?? "restrict";
 			const action =
 				onDelete === "set-null" ? "SET NULL" : onDelete.toUpperCase();
+			const referencedTable = `${table.serviceId}_${field.references.model}`;
 			columns.push(
-				`  FOREIGN KEY (${fieldName}) REFERENCES ${field.references.model}(${field.references.field}) ON DELETE ${action}`,
+				`  FOREIGN KEY (${fieldName}) REFERENCES ${referencedTable}(${field.references.field}) ON DELETE ${action}`,
 			);
 		}
 	}
@@ -91,6 +92,11 @@ function fieldToSQLType(
 			if (provider === "pg") type = "JSONB";
 			else if (provider === "mysql") type = "JSON";
 			else type = "TEXT";
+			break;
+		case "binary":
+			if (provider === "pg") type = "BYTEA";
+			else if (provider === "mysql") type = "LONGBLOB";
+			else type = "BLOB";
 			break;
 		default:
 			type = "TEXT";

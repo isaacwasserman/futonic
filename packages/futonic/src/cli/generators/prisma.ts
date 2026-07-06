@@ -97,7 +97,8 @@ export const generatePrismaSchema: SchemaGenerator = async ({
 				}
 
 				if (field.references) {
-					const refModelName = toPascalCase(field.references.model);
+					const referencedTable = `${table.serviceId}_${field.references.model}`;
+					const refModelName = toPascalCase(referencedTable);
 					let action = "Cascade";
 					if (field.references.onDelete === "restrict") action = "Restrict";
 					else if (field.references.onDelete === "set-null") action = "SetNull";
@@ -106,7 +107,7 @@ export const generatePrismaSchema: SchemaGenerator = async ({
 					builder
 						.model(modelName)
 						.field(
-							field.references.model.toLowerCase(),
+							referencedTable.toLowerCase(),
 							`${refModelName}${field.required ? "" : "?"}`,
 						)
 						.attribute(relationAttr);

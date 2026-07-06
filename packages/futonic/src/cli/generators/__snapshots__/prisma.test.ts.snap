@@ -12,15 +12,15 @@ datasource db {
 }
 
 model BillingInvoices {
-  id         String   @id
-  amount     Int
-  status     String
-  is_active  Boolean?
-  metadata   Json?
-  created_at DateTime
-  email      String
-  user_id    String
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id           String      @id
+  amount       Int
+  status       String
+  is_active    Boolean?
+  metadata     Json?
+  created_at   DateTime
+  email        String
+  user_id      String
+  billing_user BillingUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([email])
   @@map("billing_invoices")
@@ -40,15 +40,15 @@ datasource db {
 }
 
 model BillingInvoices {
-  id         String   @id
-  amount     Int
-  status     String   @db.Text
-  is_active  Boolean?
-  metadata   String?
-  created_at DateTime
-  email      String
-  user_id    String
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id           String      @id
+  amount       Int
+  status       String      @db.Text
+  is_active    Boolean?
+  metadata     String?
+  created_at   DateTime
+  email        String
+  user_id      String
+  billing_user BillingUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([email])
   @@map("billing_invoices")
@@ -68,15 +68,15 @@ datasource db {
 }
 
 model BillingInvoices {
-  id         String   @id
-  amount     Int
-  status     String
-  is_active  Boolean?
-  metadata   String?
-  created_at DateTime
-  email      String
-  user_id    String
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id           String      @id
+  amount       Int
+  status       String
+  is_active    Boolean?
+  metadata     String?
+  created_at   DateTime
+  email        String
+  user_id      String
+  billing_user BillingUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([email])
   @@map("billing_invoices")
