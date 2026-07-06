@@ -2,6 +2,10 @@
   "name": "futonic",
   "version": "0.1.0",
   "description": "Embed API routes and database tables into any host application",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/isaacwasserman/futonic.git"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
