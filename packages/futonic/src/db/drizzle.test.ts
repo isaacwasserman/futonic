@@ -121,3 +121,48 @@ describe("generateSchema", () => {
 		expect(() => foreignKeys[0].reference()).toThrow(/unknown table "ghost"/);
 	});
 });
+
+// --- Type-level inference (compile-time, verified via `tsc`) ---------------
+
+// Exact type equality: fails to compile if A and B differ.
+type Expect<T extends true> = T;
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B
+	? 1
+	: 2
+	? true
+	: false;
+
+// A literal schema so field types/flags survive as literals for inference.
+const typedSchema = {
+	tables: {
+		users: {
+			fields: {
+				id: { type: "string", primaryKey: true },
+				name: { type: "string", required: true },
+				age: { type: "number" },
+				active: { type: "boolean", required: true },
+				created: { type: "date", required: true },
+				avatar: { type: "binary" },
+			},
+		},
+	},
+} satisfies ServiceDBSchema;
+
+type PgUsers = ReturnType<
+	typeof generateSchema<typeof typedSchema, "postgres", "billing">
+>["users"]["$inferSelect"];
+
+// Primary keys and `required` fields are non-null; others are nullable.
+type _pgId = Expect<Equal<PgUsers["id"], string>>;
+type _pgName = Expect<Equal<PgUsers["name"], string>>;
+type _pgAge = Expect<Equal<PgUsers["age"], number | null>>;
+type _pgActive = Expect<Equal<PgUsers["active"], boolean>>;
+type _pgCreated = Expect<Equal<PgUsers["created"], Date>>;
+type _pgAvatar = Expect<Equal<PgUsers["avatar"], Buffer | null>>;
+
+// SQLite maps boolean/date to JS boolean/Date via column modes.
+type SqliteUsers = ReturnType<
+	typeof generateSchema<typeof typedSchema, "sqlite", "billing">
+>["users"]["$inferSelect"];
+type _sqliteActive = Expect<Equal<SqliteUsers["active"], boolean>>;
+type _sqliteCreated = Expect<Equal<SqliteUsers["created"], Date>>;
