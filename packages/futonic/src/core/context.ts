@@ -22,7 +22,7 @@ export interface ServiceContext<
 > {
 	db: InternalAdapter<TSchema>;
 	config: ResolvedConfig;
-    logger: Logger;
+	logger: Logger;
 	mountInfo: MountInfo;
 }
 

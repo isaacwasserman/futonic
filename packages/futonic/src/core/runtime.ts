@@ -24,13 +24,12 @@ export function createServiceRuntime<
 	definition: EmbeddableService<TConfig, TSchema, TEndpoints>,
 	config: ServiceConfig<TConfig>,
 ): RunnableService<TSchema> {
-
 	const service: RunnableService<TSchema> = {
 		id: definition.id,
 		version: definition.version,
 
-        async createHandler(mountInfo: { baseURL: string; mountPath: string }) {
-            const needsDb = !!definition.dbSchema;
+		async createHandler(mountInfo: { baseURL: string; mountPath: string }) {
+			const needsDb = !!definition.dbSchema;
 			let kysely: Kysely<Record<string, unknown>> | undefined;
 			if (needsDb) {
 				if (!config.database) {
@@ -47,8 +46,8 @@ export function createServiceRuntime<
 						? createInternalAdapter(kysely, definition.id, definition.dbSchema)
 						: (undefined as never),
 				config: (config.config ?? {}) as Record<string, unknown>,
-                logger: createLogger(definition.id),
-                mountInfo
+				logger: createLogger(definition.id),
+				mountInfo,
 			};
 
 			const endpoints = definition.endpoints([
@@ -58,16 +57,16 @@ export function createServiceRuntime<
 				openapi: { disabled: true },
 			});
 
-            const handler = async (request: Request) => {
-    			if (!router) {
-    				throw new Error(
-    					`Service "${definition.id}" is not initialized — call init() first`,
-    				);
-    			}
-    			return router.handler(request);
-            }
-            return handler;
-        },
+			const handler = async (request: Request) => {
+				if (!router) {
+					throw new Error(
+						`Service "${definition.id}" is not initialized — call init() first`,
+					);
+				}
+				return router.handler(request);
+			};
+			return handler;
+		},
 	};
 
 	return service;

@@ -39,7 +39,9 @@ export interface RunnableService<
 > {
 	id: string;
 	version: string;
-	createHandler(mountInfo: { baseURL: string; mountPath: string }): Promise<(request: Request) => Promise<Response>>;
+	createHandler(mountInfo: { baseURL: string; mountPath: string }): Promise<
+		(request: Request) => Promise<Response>
+	>;
 }
 
 export function createService<
