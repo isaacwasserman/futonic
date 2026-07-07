@@ -314,13 +314,17 @@ describe("handler construction (real SQLite)", () => {
 						hasLogger: typeof ctx.logger.info === "function",
 					};
 				}),
-				get: createEndpoint("/invoices/:id", { method: "GET", use }, async (c) => {
-					const ctx = (c as any).context.serviceCtx as ServiceContext;
-					const row = await ctx.db.invoices.findOne([
-						{ field: "id", value: (c as any).params.id },
-					]);
-					return { row };
-				}),
+				get: createEndpoint(
+					"/invoices/:id",
+					{ method: "GET", use },
+					async (c) => {
+						const ctx = (c as any).context.serviceCtx as ServiceContext;
+						const row = await ctx.db.invoices.findOne([
+							{ field: "id", value: (c as any).params.id },
+						]);
+						return { row };
+					},
+				),
 			}),
 		});
 
@@ -556,15 +560,19 @@ describe("two isolated services (shared connection)", () => {
 		// Each service creates its invoice through its own handler; ctx.db is no
 		// longer exposed, so the write must go through an endpoint.
 		const createEndpoints = (use: Middleware[]) => ({
-			create: createEndpoint("/invoices", { method: "POST", use }, async (c) => {
-				const ctx = (c as any).context.serviceCtx as ServiceContext;
-				const body = (c as any).body || {};
-				return ctx.db.invoices.create({
-					id: body.id,
-					amount: body.amount,
-					status: body.status,
-				});
-			}),
+			create: createEndpoint(
+				"/invoices",
+				{ method: "POST", use },
+				async (c) => {
+					const ctx = (c as any).context.serviceCtx as ServiceContext;
+					const body = (c as any).body || {};
+					return ctx.db.invoices.create({
+						id: body.id,
+						amount: body.amount,
+						status: body.status,
+					});
+				},
+			),
 			list: createEndpoint("/invoices", { method: "GET", use }, async (c) => {
 				const ctx = (c as any).context.serviceCtx as ServiceContext;
 				return { items: await ctx.db.invoices.findMany() };

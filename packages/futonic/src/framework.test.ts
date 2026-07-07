@@ -87,7 +87,10 @@ describe("createHandler contract", () => {
 			endpoints: () => ({}),
 		})({} as any);
 
-		const handler = await svc.createHandler({ baseURL: "", mountPath: "/bare" });
+		const handler = await svc.createHandler({
+			baseURL: "",
+			mountPath: "/bare",
+		});
 		// No routes → any request 404s, but the handler exists and runs.
 		const res = await handler(new Request("http://localhost/anything"));
 		expect(res.status).toBe(404);
@@ -195,7 +198,10 @@ describe("service context", () => {
 			}),
 		})({ config: { foo: "bar" } } as any);
 
-		const handler = await svc.createHandler({ baseURL: "", mountPath: "/nodb" });
+		const handler = await svc.createHandler({
+			baseURL: "",
+			mountPath: "/nodb",
+		});
 		const res = await handler(new Request("http://localhost/ctx"));
 		expect(res.status).toBe(200);
 
