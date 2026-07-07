@@ -8,7 +8,7 @@ export interface Logger {
 	debug(message: string, ...args: unknown[]): void;
 }
 
-export interface HostInfo {
+export interface MountInfo {
 	baseURL: string;
 	mountPath: string;
 }
@@ -22,8 +22,8 @@ export interface ServiceContext<
 > {
 	db: InternalAdapter<TSchema>;
 	config: ResolvedConfig;
-	logger: Logger;
-	hostInfo: HostInfo;
+    logger: Logger;
+	mountInfo: MountInfo;
 }
 
 export function createLogger(serviceId: string): Logger {

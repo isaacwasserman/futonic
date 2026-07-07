@@ -23,7 +23,7 @@
     "build": "bun run scripts/build.ts",
     "dev": "bun --watch src/index.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "lint": "biome check src/",
     "format": "biome format --write src/"
   },

@@ -9,10 +9,6 @@ The following files contain code forked and adapted from better-auth:
 
   src/db/kysely-factory.ts          — dialect detection (from packages/kysely-adapter/src/dialect.ts)
   src/db/internal-adapter.ts        — adapter method signatures (from packages/kysely-adapter/src/kysely-adapter.ts)
-  src/cli/generators/drizzle.ts     — Drizzle schema generator (from packages/cli/src/generators/drizzle.ts)
-  src/cli/generators/prisma.ts      — Prisma schema generator (from packages/cli/src/generators/prisma.ts)
-  src/cli/generators/kysely.ts      — SQL DDL generator (from packages/cli/src/generators/kysely.ts)
-  src/cli/generators/types.ts       — generator types (from packages/cli/src/generators/types.ts)
 
 The MIT License (MIT)
 Copyright (c) 2024 - present, Bereket Engida

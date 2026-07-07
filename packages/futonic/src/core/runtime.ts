@@ -24,21 +24,14 @@ export function createServiceRuntime<
 	definition: EmbeddableService<TConfig, TSchema, TEndpoints>,
 	config: ServiceConfig<TConfig>,
 ): RunnableService<TSchema> {
-	let kysely: Kysely<Record<string, unknown>> | undefined;
-	let router: { handler(request: Request): Promise<Response> } | undefined;
-	let initialized = false;
 
 	const service: RunnableService<TSchema> = {
 		id: definition.id,
 		version: definition.version,
-		serviceContext: undefined,
 
-		async init() {
-			if (initialized) {
-				throw new Error(`Service "${definition.id}" is already initialized`);
-			}
-
-			const needsDb = !!definition.dbSchema;
+        async createHandler(mountInfo: { baseURL: string; mountPath: string }) {
+            const needsDb = !!definition.dbSchema;
+			let kysely: Kysely<Record<string, unknown>> | undefined;
 			if (needsDb) {
 				if (!config.database) {
 					throw new Error(
@@ -54,42 +47,27 @@ export function createServiceRuntime<
 						? createInternalAdapter(kysely, definition.id, definition.dbSchema)
 						: (undefined as never),
 				config: (config.config ?? {}) as Record<string, unknown>,
-				logger: createLogger(definition.id),
-				hostInfo: {
-					baseURL: config.baseURL ?? "",
-					mountPath: config.mount,
-				},
+                logger: createLogger(definition.id),
+                mountInfo
 			};
-			service.serviceContext = serviceCtx;
 
 			const endpoints = definition.endpoints([
 				createServiceMiddleware(serviceCtx),
 			]);
-			router = createRouter(endpoints, {
-				basePath: config.mount,
+			const router = createRouter(endpoints, {
 				openapi: { disabled: true },
 			});
 
-			await definition.onInit?.(serviceCtx);
-			initialized = true;
-		},
-
-		async handler(request) {
-			if (!router) {
-				throw new Error(
-					`Service "${definition.id}" is not initialized — call init() first`,
-				);
-			}
-			return router.handler(request);
-		},
-
-		async shutdown() {
-			if (!initialized) return;
-			await definition.onShutdown?.();
-			if (kysely && (config.destroyDatabaseOnShutdown ?? true)) {
-				await kysely.destroy();
-			}
-		},
+            const handler = async (request: Request) => {
+    			if (!router) {
+    				throw new Error(
+    					`Service "${definition.id}" is not initialized — call init() first`,
+    				);
+    			}
+    			return router.handler(request);
+            }
+            return handler;
+        },
 	};
 
 	return service;
