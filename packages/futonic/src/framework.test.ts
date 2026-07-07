@@ -164,7 +164,7 @@ describe("service context", () => {
 				}),
 			}),
 		})({
-			database: db.raw,
+			database: db.drizzle,
 			config: { apiKey: "secret-123", maxRetries: 3 },
 		});
 
@@ -293,14 +293,14 @@ describe("independent services isolation", () => {
 			version: "1.0.0",
 			dbSchema: simpleSchema,
 			endpoints: itemEndpoints,
-		})({ database: db.raw });
+		})({ database: db.drizzle });
 
 		const beta = createService({
 			id: "beta",
 			version: "1.0.0",
 			dbSchema: simpleSchema,
 			endpoints: itemEndpoints,
-		})({ database: db.raw });
+		})({ database: db.drizzle });
 
 		const alphaHandler = await alpha.createHandler({
 			baseURL: "",
@@ -850,7 +850,7 @@ describe("full HTTP wiring", () => {
 				),
 			}),
 		})({
-			database: db.raw,
+			database: db.drizzle,
 			config: { secret: "abc" },
 		});
 
@@ -905,7 +905,7 @@ describe("full HTTP wiring", () => {
 				),
 			}),
 		})({
-			database: db.raw,
+			database: db.drizzle,
 		});
 
 		const handler = await svc.createHandler({
@@ -945,7 +945,7 @@ describe("full HTTP wiring", () => {
 				})),
 			}),
 		})({
-			database: db.raw,
+			database: db.drizzle,
 		});
 
 		db.run(
@@ -1015,7 +1015,7 @@ describe("middleware composition", () => {
 				),
 			}),
 		})({
-			database: db.raw,
+			database: db.drizzle,
 		});
 
 		const handler = await svc.createHandler({

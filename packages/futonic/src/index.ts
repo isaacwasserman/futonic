@@ -18,7 +18,10 @@ export type {
 	TableDefinition,
 	FieldDefinition,
 } from "./db/schema";
-export type { DatabaseConnection } from "./db/kysely-factory";
+export type {
+	DatabaseConnection,
+	DrizzleDatabase,
+} from "./db/kysely-factory";
 export type {
 	InternalAdapter,
 	TableAdapter,

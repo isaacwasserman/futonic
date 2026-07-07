@@ -328,7 +328,7 @@ describe("handler construction (real SQLite)", () => {
 			}),
 		});
 
-		const svc = billingService({ database: db.raw });
+		const svc = billingService({ database: db.drizzle });
 
 		const handler = await svc.createHandler({
 			baseURL: "http://localhost:3000",
@@ -410,7 +410,7 @@ describe("service handler end-to-end", () => {
 				),
 			}),
 		})({
-			database: db.raw,
+			database: db.drizzle,
 		});
 
 		const handler = await svc.createHandler({
@@ -458,7 +458,7 @@ describe("service handler end-to-end", () => {
 				),
 			}),
 		})({
-			database: db.raw,
+			database: db.drizzle,
 		});
 
 		const handler = await svc.createHandler({
@@ -512,7 +512,7 @@ describe("service handler end-to-end", () => {
 					async () => ({ items: [] }),
 				),
 			}),
-		})({ database: db.raw });
+		})({ database: db.drizzle });
 
 		const handler = await svc.createHandler({
 			baseURL: "",
@@ -584,14 +584,14 @@ describe("two isolated services (shared connection)", () => {
 			version: "1.0.0",
 			dbSchema: billingSchema,
 			endpoints: createEndpoints,
-		})({ database: db.raw });
+		})({ database: db.drizzle });
 
 		const reports = createService({
 			id: "reports",
 			version: "1.0.0",
 			dbSchema: otherSchema,
 			endpoints: createEndpoints,
-		})({ database: db.raw });
+		})({ database: db.drizzle });
 
 		const billingHandler = await billing.createHandler({
 			baseURL: "",

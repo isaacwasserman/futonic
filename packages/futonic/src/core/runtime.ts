@@ -1,7 +1,10 @@
 import { type Endpoint, createRouter } from "better-call";
 import type { Kysely } from "kysely";
 import { createInternalAdapter } from "../db/internal-adapter";
-import { createKyselyInstance } from "../db/kysely-factory";
+import {
+	createKyselyInstance,
+	extractDatabaseClient,
+} from "../db/kysely-factory";
 import type { ServiceDBSchema } from "../db/schema";
 import { createServiceMiddleware } from "../router/middleware";
 import { type ServiceContext, createLogger } from "./context";
@@ -37,7 +40,7 @@ export function createServiceRuntime<
 						`Service "${definition.id}" requires a database, but no database connection was provided`,
 					);
 				}
-				kysely = createKyselyInstance(config.database);
+				kysely = createKyselyInstance(extractDatabaseClient(config.database));
 			}
 
 			const serviceCtx: ServiceContext<TSchema> = {
