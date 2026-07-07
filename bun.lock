@@ -28,11 +28,13 @@
       },
       "peerDependencies": {
         "better-sqlite3": ">=9.0.0",
+        "drizzle-orm": ">=0.30.0",
         "mysql2": ">=3.0.0",
         "pg": ">=8.0.0",
       },
       "optionalPeers": [
         "better-sqlite3",
+        "drizzle-orm",
         "mysql2",
         "pg",
       ],

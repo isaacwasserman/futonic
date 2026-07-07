@@ -6,23 +6,116 @@
  * instances or Kysely Dialect objects directly.
  */
 
+import type { MySqlDatabase } from "drizzle-orm/mysql-core";
+import type { PgDatabase } from "drizzle-orm/pg-core";
+import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
 import type { Dialect } from "kysely";
 import { Kysely, MysqlDialect, PostgresDialect, SqliteDialect } from "kysely";
 
 export type KyselyDatabaseType = "sqlite" | "mysql" | "postgres";
 
 /**
- * The host passes one of these as the service's `database` config.
+ * The underlying driver a service opens its Kysely instance from. The host never
+ * passes one of these directly — futonic reads it off a Drizzle instance's
+ * `$client` (see {@link DrizzleDatabase}) — but the driver shape still has to be
+ * detected, since Drizzle erases which driver produced it.
+ *
+ * The driver packages (`pg`, `mysql2`, `better-sqlite3`, …) are optional peer
+ * dependencies, so rather than importing their types we describe each accepted
+ * form structurally, keyed on the exact property `detectDatabaseType` sniffs.
+ * This keeps the boundary strict without forcing a dependency on any one
+ * driver's types.
  *
  * Accepted forms:
- * - A Kysely `Dialect` instance (most explicit)
+ * - A Kysely `Dialect` instance (most explicit; detected via `"createDriver"`)
+ * - A `{ dialect: Dialect }` config object
  * - A `pg.Pool` (detected via `"connect"` property)
  * - A `mysql2` pool (detected via `"getConnection"` property)
  * - A `better-sqlite3` instance (detected via `"aggregate"` property)
  * - A Bun SQLite instance (detected via `"fileControl"` property)
+ * - A Node built-in `DatabaseSync` (detected via `"open"`/`"close"`/`"prepare"`)
+ * - A Cloudflare D1 binding (detected via `"batch"`/`"exec"`/`"prepare"`)
  */
-// biome-ignore lint/suspicious/noExplicitAny: must accept unknown driver shapes
-export type DatabaseConnection = any;
+export type DatabaseConnection =
+	| Dialect
+	| { dialect: Dialect }
+	| PgPoolLike
+	| Mysql2PoolLike
+	| BetterSqlite3Like
+	| BunSqliteLike
+	| NodeSqliteLike
+	| D1Like;
+
+/** Minimal shape of a `pg.Pool`. */
+export interface PgPoolLike {
+	connect(...args: unknown[]): unknown;
+}
+
+/** Minimal shape of a `mysql2` connection pool. */
+export interface Mysql2PoolLike {
+	getConnection(...args: unknown[]): unknown;
+}
+
+/** Minimal shape of a `better-sqlite3` database instance. */
+export interface BetterSqlite3Like {
+	aggregate(...args: unknown[]): unknown;
+}
+
+/** Minimal shape of a Bun `bun:sqlite` database instance. */
+export interface BunSqliteLike {
+	fileControl(...args: unknown[]): unknown;
+}
+
+/** Minimal shape of a Node built-in `node:sqlite` `DatabaseSync`. */
+export interface NodeSqliteLike {
+	open(...args: unknown[]): unknown;
+	close(...args: unknown[]): unknown;
+	prepare(...args: unknown[]): unknown;
+}
+
+/** Minimal shape of a Cloudflare D1 database binding. */
+export interface D1Like {
+	batch(...args: unknown[]): unknown;
+	exec(...args: unknown[]): unknown;
+	prepare(...args: unknown[]): unknown;
+}
+
+/**
+ * A Drizzle database instance — what the host passes as a service's `database`
+ * config. Any `drizzle(...)` driver factory (`drizzle-orm/node-postgres`,
+ * `drizzle-orm/mysql2`, `drizzle-orm/better-sqlite3`, `drizzle-orm/bun-sqlite`,
+ * …) returns one of these.
+ *
+ * futonic doesn't query through Drizzle; it reads the underlying driver off
+ * `$client` and opens its own Kysely connection. `$client` is attached at
+ * runtime by every `drizzle()` factory but only appears on the intersection
+ * type each factory returns, so we re-declare it over the base classes here.
+ *
+ * The generic parameters are left open (`any`) on purpose: a service accepts a
+ * host's Drizzle instance regardless of which schema/driver it was built with.
+ */
+export type DrizzleDatabase =
+	// biome-ignore lint/suspicious/noExplicitAny: accept any host Drizzle instance
+	| (PgDatabase<any> & { $client: DatabaseConnection })
+	// biome-ignore lint/suspicious/noExplicitAny: accept any host Drizzle instance
+	| (MySqlDatabase<any, any> & { $client: DatabaseConnection })
+	// biome-ignore lint/suspicious/noExplicitAny: accept any host Drizzle instance
+	| (BaseSQLiteDatabase<any, any> & { $client: DatabaseConnection });
+
+/**
+ * Extracts the underlying driver from a Drizzle instance so futonic can open its
+ * own Kysely connection from it.
+ */
+export function extractDatabaseClient(db: DrizzleDatabase): DatabaseConnection {
+	const client = (db as { $client?: DatabaseConnection }).$client;
+	if (!client) {
+		throw new Error(
+			"The provided `database` is not a Drizzle instance with a `$client` " +
+				"(pass the value returned by `drizzle(...)`).",
+		);
+	}
+	return client;
+}
 
 /**
  * Detects the database type from a driver instance using property sniffing.
@@ -90,26 +183,40 @@ export function createKyselyInstance(
 	const dbType = detectDatabaseType(connection);
 	let dialect: Dialect;
 
+	// The dialect has been resolved by property sniffing above; the driver's
+	// exact type is intentionally not a dependency of this package, so cast the
+	// connection to each constructor's expected shape at the point of use.
 	switch (dbType) {
 		case "sqlite": {
 			// Bun SQLite (has `fileControl`) needs special handling
 			// For now, standard better-sqlite3 path
+			type SqliteDb = ConstructorParameters<
+				typeof SqliteDialect
+			>[0]["database"];
 			if ("fileControl" in connection) {
 				// Bun SQLite — SqliteDialect works with Bun's API
-				dialect = new SqliteDialect({ database: connection });
+				dialect = new SqliteDialect({
+					database: connection as unknown as SqliteDb,
+				});
 			} else {
-				dialect = new SqliteDialect({ database: connection });
+				dialect = new SqliteDialect({
+					database: connection as unknown as SqliteDb,
+				});
 			}
 			break;
 		}
 		case "mysql": {
 			// mysql2 pool — MysqlDialect expects { pool }
-			dialect = new MysqlDialect({ pool: connection });
+			type MysqlPool = ConstructorParameters<typeof MysqlDialect>[0]["pool"];
+			dialect = new MysqlDialect({ pool: connection as MysqlPool });
 			break;
 		}
 		case "postgres": {
 			// pg.Pool — PostgresDialect expects { pool }
-			dialect = new PostgresDialect({ pool: connection });
+			type PostgresPool = ConstructorParameters<
+				typeof PostgresDialect
+			>[0]["pool"];
+			dialect = new PostgresDialect({ pool: connection as PostgresPool });
 			break;
 		}
 		default:

@@ -9,12 +9,15 @@
  */
 
 import { Kysely, SqliteDialect } from "kysely";
+import type { DrizzleDatabase } from "./db/kysely-factory";
 
 export interface TestDatabase {
 	/** Run a SQL statement (DDL / DML) */
 	run(sql: string): void;
 	/** The underlying database to pass to SqliteDialect */
 	raw: unknown;
+	/** A Drizzle instance wrapping this database (what services receive) */
+	drizzle: DrizzleDatabase;
 	/** A Kysely instance wrapping this database */
 	kysely: Kysely<Record<string, unknown>>;
 	/** Clean up */
@@ -83,9 +86,13 @@ async function createBunDatabase(): Promise<TestDatabase> {
 		dialect: new SqliteDialect({ database: wrapped as any }),
 	});
 
+	const { drizzle } = await import("drizzle-orm/bun-sqlite");
+	const drizzleDb = drizzle(wrapped as any);
+
 	return {
 		run: (sql: string) => inner.run(sql),
 		raw: wrapped,
+		drizzle: drizzleDb,
 		kysely,
 		async close() {
 			await kysely.destroy();
@@ -102,9 +109,13 @@ async function createNodeDatabase(): Promise<TestDatabase> {
 		dialect: new SqliteDialect({ database: db }),
 	});
 
+	const { drizzle } = await import("drizzle-orm/better-sqlite3");
+	const drizzleDb = drizzle(db);
+
 	return {
 		run: (sql: string) => db.exec(sql),
 		raw: db,
+		drizzle: drizzleDb,
 		kysely,
 		async close() {
 			await kysely.destroy();

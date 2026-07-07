@@ -1,5 +1,5 @@
 import type { Endpoint, Middleware } from "better-call";
-import type { DatabaseConnection } from "../db/kysely-factory";
+import type { DrizzleDatabase } from "../db/kysely-factory";
 import type { ServiceDBSchema } from "../db/schema";
 import type { ServiceContext } from "./context";
 import { createServiceRuntime } from "./runtime";
@@ -7,8 +7,8 @@ import { createServiceRuntime } from "./runtime";
 export interface ServiceConfig<TConfig = unknown> {
 	/** HTTP mount path, e.g. "/api/billing". Becomes the better-call router basePath. */
 	// mount: string;
-	/** Driver/dialect the service opens its own Kysely instance from. Required iff the service declares a dbSchema. */
-	database: DatabaseConnection;
+	/** Drizzle instance the service opens its own Kysely connection from (via its `$client`). Required iff the service declares a dbSchema. */
+	database: DrizzleDatabase;
 	/** Absolute base URL surfaced to endpoints via ctx.hostInfo.baseURL. */
 	// baseURL?: string;
 	/** Service-specific resolved config, surfaced as ctx.config. */
