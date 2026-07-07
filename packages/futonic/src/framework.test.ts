@@ -1,9 +1,14 @@
 /**
  * Framework-level tests for futonic's core contracts.
  *
- * These test the framework's guarantees — lifecycle, context wiring,
- * adapter edge cases, error propagation — for a single self-running
+ * These test the framework's guarantees — handler construction, context
+ * wiring, adapter edge cases, error propagation — for a single self-running
  * service (futonic no longer has a multi-service host).
+ *
+ * A service exposes a single entry point: `createHandler(mountInfo)` builds
+ * the ServiceContext, wires the endpoints, and returns a request handler.
+ * The router carries no basePath — the host strips the mount prefix, so the
+ * handler always sees bare, service-relative paths.
  *
  * Every test creates its own in-memory SQLite via test-utils, so there
  * are no ordering dependencies between tests.
@@ -16,7 +21,7 @@ import {
 	createMiddleware,
 	createRouter,
 } from "better-call";
-import type { ServiceContext } from "./core/context";
+import { type ServiceContext, createLogger } from "./core/context";
 import { createService } from "./core/service";
 import { createInternalAdapter } from "./db/internal-adapter";
 import type { ServiceDBSchema } from "./db/schema";
@@ -46,134 +51,80 @@ const CREATE_ITEMS = `CREATE TABLE test_items (
 )`;
 
 // ---------------------------------------------------------------------------
-// 1. Lifecycle
+// 1. createHandler contract
 // ---------------------------------------------------------------------------
 
-describe("lifecycle", () => {
-	test("onInit fires during init() and receives the ServiceContext", async () => {
-		const order: string[] = [];
-		let captured: ServiceContext | undefined;
+describe("createHandler contract", () => {
+	test("returns a handler bound to a ServiceContext carrying the mountInfo", async () => {
+		let seenMount: string | undefined;
 
 		const svc = createService({
 			id: "a",
 			version: "1.0.0",
-			endpoints: () => ({}),
-			onInit: async (ctx) => {
-				captured = ctx;
-				order.push("init");
-			},
-			onShutdown: async () => {
-				order.push("shutdown");
-			},
-		})({ mount: "/a" });
+			endpoints: (use: Middleware[]) => ({
+				ctx: createEndpoint("/ctx", { method: "GET", use }, async (c) => {
+					const svcCtx = (c as any).context.serviceCtx as ServiceContext;
+					seenMount = svcCtx.mountInfo.mountPath;
+					return { mountPath: svcCtx.mountInfo.mountPath };
+				}),
+			}),
+			// no db needed
+		})({} as any);
 
-		await svc.init();
-		expect(order).toEqual(["init"]);
-		expect(captured).toBeDefined();
-		expect(captured).toBe(svc.serviceContext as ServiceContext);
+		const handler = await svc.createHandler({ baseURL: "", mountPath: "/a" });
+		// Bare, service-relative path — the host has already stripped the mount.
+		const res = await handler(new Request("http://localhost/ctx"));
 
-		await svc.shutdown();
-		expect(order).toEqual(["init", "shutdown"]);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ mountPath: "/a" });
+		expect(seenMount).toBe("/a");
 	});
 
-	test("service without lifecycle hooks doesn't break init/shutdown", async () => {
+	test("service without endpoints still produces a working handler", async () => {
 		const svc = createService({
 			id: "bare",
 			version: "1.0.0",
 			endpoints: () => ({}),
-			// no onInit / onShutdown
-		})({ mount: "/bare" });
+		})({} as any);
 
-		await svc.init();
-		await svc.shutdown();
-		// No error = pass
+		const handler = await svc.createHandler({ baseURL: "", mountPath: "/bare" });
+		// No routes → any request 404s, but the handler exists and runs.
+		const res = await handler(new Request("http://localhost/anything"));
+		expect(res.status).toBe(404);
 	});
 
-	test("serviceContext is undefined before init, populated after", async () => {
-		const svc = createService({
-			id: "x",
-			version: "1.0.0",
-			endpoints: () => ({}),
-		})({ mount: "/x" });
-
-		expect(svc.serviceContext).toBeUndefined();
-
-		await svc.init();
-
-		expect(svc.serviceContext).toBeDefined();
-		expect(svc.serviceContext?.hostInfo.mountPath).toBe("/x");
-
-		await svc.shutdown();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// 2. Lifecycle error propagation + init/shutdown contracts
-// ---------------------------------------------------------------------------
-
-describe("init / shutdown contracts", () => {
-	test("onInit throwing rejects init()", async () => {
-		const svc = createService({
-			id: "broken",
-			version: "1.0.0",
-			endpoints: () => ({}),
-			onInit: async () => {
-				throw new Error("init boom");
-			},
-		})({ mount: "/x" });
-
-		await expect(svc.init()).rejects.toThrow("init boom");
-	});
-
-	test("init() rejects when dbSchema present but no database provided", async () => {
+	test("createHandler rejects when dbSchema present but no database provided", async () => {
 		const svc = createService({
 			id: "needsdb",
 			version: "1.0.0",
 			dbSchema: simpleSchema,
 			endpoints: () => ({}),
-		})({ mount: "/x" });
-
-		await expect(svc.init()).rejects.toThrow("no database connection");
-	});
-
-	test("handler() before init() throws", async () => {
-		const svc = createService({
-			id: "notyet",
-			version: "1.0.0",
-			endpoints: () => ({}),
-		})({ mount: "/x" });
+		})({} as any);
 
 		await expect(
-			svc.handler(new Request("http://localhost/x/anything")),
-		).rejects.toThrow("init() first");
+			svc.createHandler({ baseURL: "", mountPath: "/x" }),
+		).rejects.toThrow("no database connection");
 	});
 
-	test("calling init() twice throws", async () => {
+	test("each createHandler call builds an independent handler", async () => {
 		const svc = createService({
-			id: "twice",
+			id: "multi",
 			version: "1.0.0",
 			endpoints: () => ({}),
-		})({ mount: "/x" });
+		})({} as any);
 
-		await svc.init();
-		await expect(svc.init()).rejects.toThrow("already initialized");
-		await svc.shutdown();
-	});
-
-	test("shutdown() before init() is a no-op", async () => {
-		const svc = createService({
-			id: "noinit",
-			version: "1.0.0",
-			endpoints: () => ({}),
-		})({ mount: "/x" });
-
-		// Must not throw
-		await svc.shutdown();
+		const h1 = await svc.createHandler({ baseURL: "", mountPath: "/one" });
+		const h2 = await svc.createHandler({ baseURL: "", mountPath: "/two" });
+		expect(h1).not.toBe(h2);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// 3. Service context / config / logger / hostInfo
+// 3. Service context / config / logger / mountInfo
+//
+// The ServiceContext is no longer exposed on the runnable; it's only visible
+// to endpoints via the injected middleware. So we assert on it by returning
+// its fields from an endpoint.
 // ---------------------------------------------------------------------------
 
 describe("service context", () => {
@@ -192,58 +143,71 @@ describe("service context", () => {
 		await db.close();
 	});
 
-	test("ServiceContext exposes db, config, logger, hostInfo", async () => {
+	test("ServiceContext exposes db, config, logger, mountInfo", async () => {
 		const svc = createService({
 			id: "alpha",
 			version: "1.0.0",
 			dbSchema: simpleSchema,
-			endpoints: () => ({}),
+			endpoints: (use: Middleware[]) => ({
+				ctx: createEndpoint("/ctx", { method: "GET", use }, async (c) => {
+					const svcCtx = (c as any).context.serviceCtx as ServiceContext;
+					return {
+						hasDb: svcCtx.db !== undefined,
+						hasLogger: typeof svcCtx.logger?.info === "function",
+						config: svcCtx.config,
+						mountPath: svcCtx.mountInfo.mountPath,
+						baseURL: svcCtx.mountInfo.baseURL,
+					};
+				}),
+			}),
 		})({
-			mount: "/api/alpha",
 			database: db.raw,
-			baseURL: "http://localhost:3000",
 			config: { apiKey: "secret-123", maxRetries: 3 },
-			destroyDatabaseOnShutdown: false,
 		});
 
-		await svc.init();
+		const handler = await svc.createHandler({
+			baseURL: "http://localhost:3000",
+			mountPath: "/api/alpha",
+		});
+		const res = await handler(new Request("http://localhost/ctx"));
+		expect(res.status).toBe(200);
 
-		const ctx = svc.serviceContext!;
-		expect(ctx.db).toBeDefined();
-		expect(ctx.logger).toBeDefined();
-		expect(ctx.config).toEqual({ apiKey: "secret-123", maxRetries: 3 });
-		expect(ctx.hostInfo.mountPath).toBe("/api/alpha");
-		expect(ctx.hostInfo.baseURL).toBe("http://localhost:3000");
+		const data = await res.json();
+		expect(data.hasDb).toBe(true);
+		expect(data.hasLogger).toBe(true);
+		expect(data.config).toEqual({ apiKey: "secret-123", maxRetries: 3 });
+		expect(data.mountPath).toBe("/api/alpha");
+		expect(data.baseURL).toBe("http://localhost:3000");
 	});
 
 	test("service without a dbSchema still gets a context (no db access needed)", async () => {
 		const svc = createService({
 			id: "nodb",
 			version: "1.0.0",
-			endpoints: () => ({}),
-		})({ mount: "/nodb", config: { foo: "bar" } });
+			endpoints: (use: Middleware[]) => ({
+				ctx: createEndpoint("/ctx", { method: "GET", use }, async (c) => {
+					const svcCtx = (c as any).context.serviceCtx as ServiceContext;
+					return {
+						mountPath: svcCtx.mountInfo.mountPath,
+						config: svcCtx.config,
+					};
+				}),
+			}),
+		})({ config: { foo: "bar" } } as any);
 
-		await svc.init();
+		const handler = await svc.createHandler({ baseURL: "", mountPath: "/nodb" });
+		const res = await handler(new Request("http://localhost/ctx"));
+		expect(res.status).toBe(200);
 
-		const ctx = svc.serviceContext!;
-		expect(ctx.hostInfo.mountPath).toBe("/nodb");
-		expect(ctx.config).toEqual({ foo: "bar" });
-
-		await svc.shutdown();
+		const data = await res.json();
+		expect(data.mountPath).toBe("/nodb");
+		expect(data.config).toEqual({ foo: "bar" });
 	});
 
-	test("accessing a table not in the schema throws", async () => {
-		const svc = createService({
-			id: "alpha",
-			version: "1.0.0",
-			dbSchema: simpleSchema,
-			endpoints: () => ({}),
-		})({ mount: "/x", database: db.raw, destroyDatabaseOnShutdown: false });
-
-		await svc.init();
-
-		const ctx = svc.serviceContext!;
-		expect(() => (ctx.db as any).nonexistent).toThrow(
+	test("accessing a table not in the schema throws", () => {
+		// Pure adapter concern — the service wires this same adapter into ctx.db.
+		const adapter = createInternalAdapter(db.kysely, "alpha", simpleSchema);
+		expect(() => (adapter as any).nonexistent).toThrow(
 			'does not have a table named "nonexistent"',
 		);
 	});
@@ -254,7 +218,7 @@ describe("service context", () => {
 // ---------------------------------------------------------------------------
 
 describe("logger", () => {
-	test("logger prefix is [<id>]", async () => {
+	test("logger prefix is [<id>]", () => {
 		const logs: string[] = [];
 		const originalInfo = console.info;
 		console.info = (...args: unknown[]) => {
@@ -262,17 +226,8 @@ describe("logger", () => {
 		};
 
 		try {
-			const svc = createService({
-				id: "myservice",
-				version: "1.0.0",
-				endpoints: () => ({}),
-				onInit: async (ctx) => {
-					ctx.logger.info("hello");
-				},
-			})({ mount: "/x" });
-
-			await svc.init();
-			await svc.shutdown();
+			const logger = createLogger("myservice");
+			logger.info("hello");
 		} finally {
 			console.info = originalInfo;
 		}
@@ -308,49 +263,70 @@ describe("independent services isolation", () => {
 	});
 
 	test("data written by one service is invisible to another", async () => {
+		// Each service gets create/list endpoints; we drive them via their own
+		// handlers since ctx.db is no longer exposed on the runnable.
+		const itemEndpoints = (use: Middleware[]) => ({
+			create: createEndpoint("/items", { method: "POST", use }, async (c) => {
+				const svcCtx = (c as any).context.serviceCtx as ServiceContext;
+				const body = (c as any).body || {};
+				return (svcCtx.db as any).items.create({
+					id: body.id,
+					name: body.name,
+					value: body.value ?? null,
+				});
+			}),
+			list: createEndpoint("/items", { method: "GET", use }, async (c) => {
+				const svcCtx = (c as any).context.serviceCtx as ServiceContext;
+				const items = await (svcCtx.db as any).items.findMany();
+				return { items, total: items.length };
+			}),
+		});
+
 		const alpha = createService({
 			id: "alpha",
 			version: "1.0.0",
 			dbSchema: simpleSchema,
-			endpoints: () => ({}),
-		})({
-			mount: "/api/alpha",
-			database: db.raw,
-			destroyDatabaseOnShutdown: false,
-		});
+			endpoints: itemEndpoints,
+		})({ database: db.raw });
 
 		const beta = createService({
 			id: "beta",
 			version: "1.0.0",
 			dbSchema: simpleSchema,
-			endpoints: () => ({}),
-		})({
-			mount: "/api/beta",
-			database: db.raw,
-			destroyDatabaseOnShutdown: false,
+			endpoints: itemEndpoints,
+		})({ database: db.raw });
+
+		const alphaHandler = await alpha.createHandler({
+			baseURL: "",
+			mountPath: "/api/alpha",
+		});
+		const betaHandler = await beta.createHandler({
+			baseURL: "",
+			mountPath: "/api/beta",
 		});
 
-		await alpha.init();
-		await beta.init();
-
-		const ctxA = alpha.serviceContext!;
-		const ctxB = beta.serviceContext!;
-
-		// Distinct context objects and adapters.
-		expect(ctxA).not.toBe(ctxB);
-		expect(ctxA.db).not.toBe(ctxB.db);
-		expect(ctxA.hostInfo.mountPath).toBe("/api/alpha");
-		expect(ctxB.hostInfo.mountPath).toBe("/api/beta");
+		const post = (h: typeof alphaHandler, body: unknown) =>
+			h(
+				new Request("http://localhost/items", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
+				}),
+			);
+		const listCount = async (h: typeof alphaHandler) => {
+			const res = await h(new Request("http://localhost/items"));
+			return (await res.json()).total as number;
+		};
 
 		// Write to alpha; beta sees nothing.
-		await ctxA.db.items.create({ id: "a1", name: "alpha-only", value: 1 });
-		expect(await ctxB.db.items.findMany()).toHaveLength(0);
-		expect(await ctxA.db.items.findMany()).toHaveLength(1);
+		await post(alphaHandler, { id: "a1", name: "alpha-only", value: 1 });
+		expect(await listCount(betaHandler)).toBe(0);
+		expect(await listCount(alphaHandler)).toBe(1);
 
 		// Write to beta; each still sees only its own.
-		await ctxB.db.items.create({ id: "b1", name: "beta-only", value: 2 });
-		expect(await ctxA.db.items.count()).toBe(1);
-		expect(await ctxB.db.items.count()).toBe(1);
+		await post(betaHandler, { id: "b1", name: "beta-only", value: 2 });
+		expect(await listCount(alphaHandler)).toBe(1);
+		expect(await listCount(betaHandler)).toBe(1);
 		// db.close() in afterEach is the single teardown (no shutdown calls).
 	});
 });
@@ -360,15 +336,15 @@ describe("independent services isolation", () => {
 // ---------------------------------------------------------------------------
 
 describe("service factory", () => {
-	test("same factory produces independent mounted instances", () => {
+	test("same factory produces independent instances", () => {
 		const factory = createService({
 			id: "svc",
 			version: "1.0.0",
 			endpoints: () => ({}),
 		});
 
-		const a = factory({ mount: "/a", config: { key: "a" } });
-		const b = factory({ mount: "/b", config: { key: "b" } });
+		const a = factory({ config: { key: "a" } } as any);
+		const b = factory({ config: { key: "b" } } as any);
 
 		expect(a).not.toBe(b);
 		expect(a.id).toBe("svc");
@@ -816,9 +792,10 @@ describe("concurrent database operations", () => {
 // ---------------------------------------------------------------------------
 // 9. Full HTTP wiring through a single service
 //
-// Drives svc.handler(request) directly. Proves futonic wires the right
-// ServiceContext into the endpoint at the mounted path via the injected
-// middleware passed to the endpoints factory.
+// Drives the handler returned by createHandler() directly. Proves futonic
+// wires the right ServiceContext into the endpoint via the injected
+// middleware passed to the endpoints factory. The router has no basePath, so
+// requests use bare, service-relative paths (the host strips the mount).
 // ---------------------------------------------------------------------------
 
 describe("full HTTP wiring", () => {
@@ -832,7 +809,7 @@ describe("full HTTP wiring", () => {
 		await db.close();
 	});
 
-	test("endpoint receives correct ServiceContext via svc.handler", async () => {
+	test("endpoint receives correct ServiceContext via the handler", async () => {
 		db.run("CREATE TABLE echo_items (id TEXT PRIMARY KEY, name TEXT NOT NULL)");
 
 		const echoSchema = {
@@ -858,8 +835,8 @@ describe("full HTTP wiring", () => {
 						const svcCtx = (handlerCtx as any).context
 							.serviceCtx as ServiceContext;
 						return {
-							mountPath: svcCtx.hostInfo.mountPath,
-							baseURL: svcCtx.hostInfo.baseURL,
+							mountPath: svcCtx.mountInfo.mountPath,
+							baseURL: svcCtx.mountInfo.baseURL,
 							config: svcCtx.config,
 							hasDb: svcCtx.db !== undefined,
 						};
@@ -867,18 +844,16 @@ describe("full HTTP wiring", () => {
 				),
 			}),
 		})({
-			mount: "/api/echo",
 			database: db.raw,
-			baseURL: "http://testhost:9999",
 			config: { secret: "abc" },
-			destroyDatabaseOnShutdown: false,
 		});
 
-		await svc.init();
+		const handler = await svc.createHandler({
+			baseURL: "http://testhost:9999",
+			mountPath: "/api/echo",
+		});
 
-		const res = await svc.handler(
-			new Request("http://testhost:9999/api/echo/context"),
-		);
+		const res = await handler(new Request("http://testhost:9999/context"));
 		expect(res.status).toBe(200);
 
 		const data = await res.json();
@@ -924,16 +899,17 @@ describe("full HTTP wiring", () => {
 				),
 			}),
 		})({
-			mount: "/api/store",
 			database: db.raw,
-			destroyDatabaseOnShutdown: false,
 		});
 
-		await svc.init();
+		const handler = await svc.createHandler({
+			baseURL: "",
+			mountPath: "/api/store",
+		});
 
 		// Create
-		const createRes = await svc.handler(
-			new Request("http://localhost/api/store/items", {
+		const createRes = await handler(
+			new Request("http://localhost/items", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ id: "x1", name: "widget", value: 42 }),
@@ -945,16 +921,14 @@ describe("full HTTP wiring", () => {
 		expect(created.name).toBe("widget");
 
 		// List
-		const listRes = await svc.handler(
-			new Request("http://localhost/api/store/items"),
-		);
+		const listRes = await handler(new Request("http://localhost/items"));
 		expect(listRes.status).toBe(200);
 		const listed = await listRes.json();
 		expect(listed.total).toBe(1);
 		expect(listed.items[0].id).toBe("x1");
 	});
 
-	test("wrong / partial mount path returns 404", async () => {
+	test("unknown path returns 404", async () => {
 		const svc = createService({
 			id: "inventory",
 			version: "1.0.0",
@@ -965,34 +939,30 @@ describe("full HTTP wiring", () => {
 				})),
 			}),
 		})({
-			mount: "/api/inventory",
 			database: db.raw,
-			destroyDatabaseOnShutdown: false,
 		});
 
 		db.run(
 			"CREATE TABLE inventory_items (id TEXT PRIMARY KEY, name TEXT NOT NULL, value INTEGER)",
 		);
 
-		await svc.init();
+		const handler = await svc.createHandler({
+			baseURL: "",
+			mountPath: "/api/inventory",
+		});
 
-		// Correct path works
-		const goodRes = await svc.handler(
-			new Request("http://localhost/api/inventory/items"),
-		);
+		// Known bare path works.
+		const goodRes = await handler(new Request("http://localhost/items"));
 		expect(goodRes.status).toBe(200);
 
-		// Wrong path → 404
-		const badRes = await svc.handler(
-			new Request("http://localhost/api/billing/items"),
-		);
+		// Unknown path → 404. (Prefix stripping is the host's job now; the
+		// handler only ever sees service-relative paths.)
+		const badRes = await handler(new Request("http://localhost/nope"));
 		expect(badRes.status).toBe(404);
 
-		// Partial path → 404
-		const partialRes = await svc.handler(
-			new Request("http://localhost/api/inventory"),
-		);
-		expect(partialRes.status).toBe(404);
+		// Root → 404 (no endpoint registered there).
+		const rootRes = await handler(new Request("http://localhost/"));
+		expect(rootRes.status).toBe(404);
 	});
 });
 
@@ -1039,14 +1009,15 @@ describe("middleware composition", () => {
 				),
 			}),
 		})({
-			mount: "/api/mw",
 			database: db.raw,
-			destroyDatabaseOnShutdown: false,
 		});
 
-		await svc.init();
+		const handler = await svc.createHandler({
+			baseURL: "",
+			mountPath: "/api/mw",
+		});
 
-		const res = await svc.handler(new Request("http://localhost/api/mw/test"));
+		const res = await handler(new Request("http://localhost/test"));
 		expect(res.status).toBe(200);
 
 		const data = await res.json();
@@ -1155,43 +1126,32 @@ describe("multiple tables per service", () => {
 			"CREATE TABLE blog_posts (id TEXT PRIMARY KEY, title TEXT NOT NULL, author_id TEXT NOT NULL)",
 		);
 
-		const svc = createService({
-			id: "blog",
-			version: "1.0.0",
-			dbSchema: multiSchema,
-			endpoints: () => ({}),
-		})({
-			mount: "/api/blog",
-			database: db.raw,
-			destroyDatabaseOnShutdown: false,
-		});
+		// The service wires exactly this adapter into ctx.db; since ctx.db is no
+		// longer exposed on the runnable, exercise the same adapter directly.
+		const adapter = createInternalAdapter(db.kysely, "blog", multiSchema);
 
-		await svc.init();
-
-		const ctx = svc.serviceContext!;
-
-		await ctx.db.users.create({ id: "u1", email: "alice@test.com" });
-		await ctx.db.posts.create({
+		await adapter.users.create({ id: "u1", email: "alice@test.com" });
+		await adapter.posts.create({
 			id: "p1",
 			title: "First Post",
 			author_id: "u1",
 		});
-		await ctx.db.posts.create({
+		await adapter.posts.create({
 			id: "p2",
 			title: "Second Post",
 			author_id: "u1",
 		});
 
-		expect(await ctx.db.users.count()).toBe(1);
-		expect(await ctx.db.posts.count()).toBe(2);
+		expect(await adapter.users.count()).toBe(1);
+		expect(await adapter.posts.count()).toBe(2);
 
-		const posts = await ctx.db.posts.findMany({
+		const posts = await adapter.posts.findMany({
 			where: [{ field: "author_id", value: "u1" }],
 		});
 		expect(posts).toHaveLength(2);
 
 		// Tables don't leak into each other.
-		expect(() => (ctx.db as any).comments).toThrow(
+		expect(() => (adapter as any).comments).toThrow(
 			'does not have a table named "comments"',
 		);
 

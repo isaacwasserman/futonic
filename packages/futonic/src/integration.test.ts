@@ -1,11 +1,14 @@
 /**
  * End-to-end integration tests.
  *
- * Proves the full loop: define service → init with real SQLite → CRUD through
- * InternalAdapter → hit endpoints via Request/Response.
+ * Proves the full loop: define service → build a handler with real SQLite →
+ * CRUD through InternalAdapter → hit endpoints via Request/Response.
  *
  * Each service is now self-running: `createService(def)(config)` yields a
- * runnable with init()/handler()/shutdown(). No host, no manual router wiring.
+ * runnable whose single entry point is `createHandler(mountInfo)` — it builds
+ * the ServiceContext, wires the endpoints, and returns a request handler. The
+ * router carries no basePath, so the handler sees bare, service-relative
+ * paths (the host strips the mount prefix).
  *
  * Uses test-utils.ts for portable SQLite (bun:sqlite on Bun, better-sqlite3
  * on Node). No framework needed — the service's handler works with standard
@@ -14,7 +17,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { type Middleware, createEndpoint } from "better-call";
-import type { ServiceContext } from "./core/context";
+import { type ServiceContext, createLogger } from "./core/context";
 import { createService } from "./core/service";
 import { createInternalAdapter } from "./db/internal-adapter";
 import { detectDatabaseType } from "./db/kysely-factory";
@@ -283,71 +286,80 @@ describe("InternalAdapter (real SQLite)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Service lifecycle with real DB (init → onInit gets working DB → shutdown)
+// 4. Handler construction with real DB (createHandler wires a working context)
 // ---------------------------------------------------------------------------
 
-describe("service lifecycle (real SQLite)", () => {
-	test("full lifecycle: init → onInit gets working DB → shutdown", async () => {
+describe("handler construction (real SQLite)", () => {
+	test("createHandler wires a working ServiceContext into endpoints", async () => {
 		const db = await createTestDatabase();
 		db.run(CREATE_TABLE);
-
-		let capturedCtx: ServiceContext | null = null;
 
 		const billingService = createService({
 			id: "billing",
 			version: "0.1.0",
 			dbSchema: billingSchema,
-			endpoints: () => ({}),
-			onInit: async (ctx) => {
-				capturedCtx = ctx;
-				await ctx.db.invoices.create({
-					id: "init-1",
-					amount: 999,
-					status: "created-in-init",
-				});
-			},
+			endpoints: (use: Middleware[]) => ({
+				// Echoes the wired ServiceContext and seeds a row via ctx.db.
+				setup: createEndpoint("/setup", { method: "POST", use }, async (c) => {
+					const ctx = (c as any).context.serviceCtx as ServiceContext;
+					await ctx.db.invoices.create({
+						id: "init-1",
+						amount: 999,
+						status: "created-in-setup",
+					});
+					return {
+						mountPath: ctx.mountInfo.mountPath,
+						baseURL: ctx.mountInfo.baseURL,
+						config: ctx.config,
+						hasLogger: typeof ctx.logger.info === "function",
+					};
+				}),
+				get: createEndpoint("/invoices/:id", { method: "GET", use }, async (c) => {
+					const ctx = (c as any).context.serviceCtx as ServiceContext;
+					const row = await ctx.db.invoices.findOne([
+						{ field: "id", value: (c as any).params.id },
+					]);
+					return { row };
+				}),
+			}),
 		});
 
-		const svc = billingService({
-			mount: "/api/billing",
-			database: db.raw,
+		const svc = billingService({ database: db.raw });
+
+		const handler = await svc.createHandler({
 			baseURL: "http://localhost:3000",
-			// Share the connection with the test harness; let db.close() tear it down.
-			destroyDatabaseOnShutdown: false,
+			mountPath: "/api/billing",
 		});
 
-		expect(svc.serviceContext).toBeUndefined();
+		const setupRes = await handler(
+			new Request("http://localhost/setup", { method: "POST" }),
+		);
+		expect(setupRes.status).toBe(200);
+		const setup = await setupRes.json();
+		expect(setup.mountPath).toBe("/api/billing");
+		expect(setup.baseURL).toBe("http://localhost:3000");
+		expect(setup.config).toEqual({});
+		expect(setup.hasLogger).toBe(true);
 
-		await svc.init();
+		const getRes = await handler(
+			new Request("http://localhost/invoices/init-1"),
+		);
+		expect((await getRes.json()).row.amount).toBe(999);
 
-		expect(svc.serviceContext).toBeDefined();
-		expect(svc.serviceContext).toBe(capturedCtx as unknown as ServiceContext);
-
-		// ServiceContext shape.
-		const ctx = svc.serviceContext as ServiceContext;
-		expect(ctx.hostInfo.mountPath).toBe("/api/billing");
-		expect(ctx.hostInfo.baseURL).toBe("http://localhost:3000");
-		expect(ctx.config).toEqual({});
-		expect(typeof ctx.logger.info).toBe("function");
-
-		const row = await ctx.db.invoices.findOne([
-			{ field: "id", value: "init-1" },
-		]);
-		expect(row?.amount).toBe(999);
-
-		await svc.shutdown();
 		await db.close();
 	});
 
-	test("init rejects when dbSchema present but no database provided", async () => {
+	test("createHandler rejects when dbSchema present but no database provided", async () => {
 		const svc = createService({
 			id: "billing",
 			version: "0.1.0",
 			dbSchema: billingSchema,
 			endpoints: () => ({}),
-		})({ mount: "/api/billing" });
+		})({} as any);
 
-		await expect(svc.init()).rejects.toThrow("no database connection");
+		await expect(
+			svc.createHandler({ baseURL: "", mountPath: "/api/billing" }),
+		).rejects.toThrow("no database connection");
 	});
 
 	test("logger prefix uses [<id>] form", () => {
@@ -357,17 +369,8 @@ describe("service lifecycle (real SQLite)", () => {
 			logs.push(String(args[0]));
 		};
 		try {
-			const svc = createService({
-				id: "reports",
-				version: "1.0.0",
-				endpoints: () => ({}),
-				onInit: async (ctx) => {
-					ctx.logger.info("hello");
-				},
-			})({ mount: "/api/reports" });
-			return svc.init().then(() => {
-				expect(logs).toContain("[reports]");
-			});
+			createLogger("reports").info("hello");
+			expect(logs).toContain("[reports]");
 		} finally {
 			console.info = original;
 		}
@@ -403,15 +406,16 @@ describe("service handler end-to-end", () => {
 				),
 			}),
 		})({
-			mount: "/api/billing",
 			database: db.raw,
-			destroyDatabaseOnShutdown: false,
 		});
 
-		await svc.init();
+		const handler = await svc.createHandler({
+			baseURL: "",
+			mountPath: "/api/billing",
+		});
 
-		const res = await svc.handler(
-			new Request("http://localhost/api/billing/invoices", { method: "GET" }),
+		const res = await handler(
+			new Request("http://localhost/invoices", { method: "GET" }),
 		);
 
 		expect(res.status).toBe(200);
@@ -450,15 +454,16 @@ describe("service handler end-to-end", () => {
 				),
 			}),
 		})({
-			mount: "/api/billing",
 			database: db.raw,
-			destroyDatabaseOnShutdown: false,
 		});
 
-		await svc.init();
+		const handler = await svc.createHandler({
+			baseURL: "",
+			mountPath: "/api/billing",
+		});
 
-		const res = await svc.handler(
-			new Request("http://localhost/api/billing/invoices", {
+		const res = await handler(
+			new Request("http://localhost/invoices", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -475,26 +480,45 @@ describe("service handler end-to-end", () => {
 		expect(data.amount).toBe(500);
 		expect(data.status).toBe("draft");
 
-		// Verify it's actually persisted via the service's own adapter.
-		const rows = await (
-			svc.serviceContext as ServiceContext
-		).db.invoices.findMany();
+		// Verify it's actually persisted, reading the same physical (prefixed)
+		// table via a direct adapter — ctx.db is no longer exposed on the runnable.
+		const rows = await createInternalAdapter(
+			db.kysely,
+			"billing",
+			billingSchema,
+		).invoices.findMany();
 		expect(rows).toHaveLength(1);
 		expect(rows[0]?.customer_name).toBe("Dave");
 
 		await db.close();
 	});
 
-	test("handler throws before init()", async () => {
+	test("unknown path returns 404", async () => {
+		const db = await createTestDatabase();
+		db.run(CREATE_TABLE);
+
 		const svc = createService({
 			id: "billing",
 			version: "1.0.0",
-			endpoints: () => ({}),
-		})({ mount: "/api/billing" });
+			dbSchema: billingSchema,
+			endpoints: (use: Middleware[]) => ({
+				listInvoices: createEndpoint(
+					"/invoices",
+					{ method: "GET", use },
+					async () => ({ items: [] }),
+				),
+			}),
+		})({ database: db.raw });
 
-		await expect(
-			svc.handler(new Request("http://localhost/api/billing/x")),
-		).rejects.toThrow("not initialized");
+		const handler = await svc.createHandler({
+			baseURL: "",
+			mountPath: "/api/billing",
+		});
+
+		const res = await handler(new Request("http://localhost/nope"));
+		expect(res.status).toBe(404);
+
+		await db.close();
 	});
 });
 
@@ -529,47 +553,65 @@ describe("two isolated services (shared connection)", () => {
 			)
 		`);
 
+		// Each service creates its invoice through its own handler; ctx.db is no
+		// longer exposed, so the write must go through an endpoint.
+		const createEndpoints = (use: Middleware[]) => ({
+			create: createEndpoint("/invoices", { method: "POST", use }, async (c) => {
+				const ctx = (c as any).context.serviceCtx as ServiceContext;
+				const body = (c as any).body || {};
+				return ctx.db.invoices.create({
+					id: body.id,
+					amount: body.amount,
+					status: body.status,
+				});
+			}),
+			list: createEndpoint("/invoices", { method: "GET", use }, async (c) => {
+				const ctx = (c as any).context.serviceCtx as ServiceContext;
+				return { items: await ctx.db.invoices.findMany() };
+			}),
+		});
+
 		const billing = createService({
 			id: "billing",
 			version: "1.0.0",
 			dbSchema: billingSchema,
-			endpoints: () => ({}),
-		})({
-			mount: "/api/billing",
-			database: db.raw,
-			destroyDatabaseOnShutdown: false,
-		});
+			endpoints: createEndpoints,
+		})({ database: db.raw });
 
 		const reports = createService({
 			id: "reports",
 			version: "1.0.0",
 			dbSchema: otherSchema,
-			endpoints: () => ({}),
-		})({
-			mount: "/api/reports",
-			database: db.raw,
-			destroyDatabaseOnShutdown: false,
+			endpoints: createEndpoints,
+		})({ database: db.raw });
+
+		const billingHandler = await billing.createHandler({
+			baseURL: "",
+			mountPath: "/api/billing",
+		});
+		const reportsHandler = await reports.createHandler({
+			baseURL: "",
+			mountPath: "/api/reports",
 		});
 
-		await billing.init();
-		await reports.init();
+		const create = (h: typeof billingHandler, body: unknown) =>
+			h(
+				new Request("http://localhost/invoices", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
+				}),
+			);
+		const list = async (h: typeof billingHandler) => {
+			const res = await h(new Request("http://localhost/invoices"));
+			return (await res.json()).items as Array<{ id: string }>;
+		};
 
-		const billingDb = (billing.serviceContext as ServiceContext).db;
-		const reportsDb = (reports.serviceContext as ServiceContext).db;
+		await create(billingHandler, { id: "b-1", amount: 100, status: "draft" });
+		await create(reportsHandler, { id: "r-1", amount: 999, status: "final" });
 
-		await billingDb.invoices.create({
-			id: "b-1",
-			amount: 100,
-			status: "draft",
-		});
-		await reportsDb.invoices.create({
-			id: "r-1",
-			amount: 999,
-			status: "final",
-		});
-
-		const billingRows = await billingDb.invoices.findMany();
-		const reportsRows = await reportsDb.invoices.findMany();
+		const billingRows = await list(billingHandler);
+		const reportsRows = await list(reportsHandler);
 
 		expect(billingRows).toHaveLength(1);
 		expect(billingRows[0]?.id).toBe("b-1");
