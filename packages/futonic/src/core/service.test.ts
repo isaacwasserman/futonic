@@ -19,13 +19,10 @@ describe("createService", () => {
 			endpoints: () => ({}),
 		});
 
-		const svc = factory({ mount: "/api/billing" });
+		const svc = factory({} as any);
 
 		expect(svc.id).toBe("billing");
 		expect(svc.version).toBe("0.1.0");
-		expect(typeof svc.init).toBe("function");
-		expect(typeof svc.handler).toBe("function");
-		expect(typeof svc.shutdown).toBe("function");
-		expect(svc.serviceContext).toBeUndefined();
+		expect(typeof svc.createHandler).toBe("function");
 	});
 });

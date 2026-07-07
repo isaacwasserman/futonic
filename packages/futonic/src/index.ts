@@ -8,7 +8,7 @@ export type {
 export type {
 	ServiceContext,
 	Logger,
-	HostInfo,
+	MountInfo as HostInfo,
 	ResolvedConfig,
 } from "./core/context";
 

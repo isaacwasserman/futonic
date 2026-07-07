@@ -6,15 +6,13 @@ import { createServiceRuntime } from "./runtime";
 
 export interface ServiceConfig<TConfig = unknown> {
 	/** HTTP mount path, e.g. "/api/billing". Becomes the better-call router basePath. */
-	mount: string;
+	// mount: string;
 	/** Driver/dialect the service opens its own Kysely instance from. Required iff the service declares a dbSchema. */
-	database?: DatabaseConnection;
+	database: DatabaseConnection;
 	/** Absolute base URL surfaced to endpoints via ctx.hostInfo.baseURL. */
-	baseURL?: string;
+	// baseURL?: string;
 	/** Service-specific resolved config, surfaced as ctx.config. */
 	config?: TConfig;
-	/** Call kysely.destroy() on shutdown(). Default true; set false when sharing one connection across services. */
-	destroyDatabaseOnShutdown?: boolean;
 }
 
 export interface EmbeddableService<
@@ -41,11 +39,9 @@ export interface RunnableService<
 > {
 	id: string;
 	version: string;
-	/** Populated once init() resolves; undefined before. */
-	serviceContext?: ServiceContext<TSchema>;
-	init(): Promise<void>;
-	handler(request: Request): Promise<Response>;
-	shutdown(): Promise<void>;
+	createHandler(mountInfo: { baseURL: string; mountPath: string }): Promise<
+		(request: Request) => Promise<Response>
+	>;
 }
 
 export function createService<
