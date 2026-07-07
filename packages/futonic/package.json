@@ -17,6 +17,10 @@
     "./client": {
       "import": "./dist/client/index.js",
       "types": "./dist/client/index.d.ts"
+    },
+    "./drizzle": {
+      "import": "./dist/db/drizzle.js",
+      "types": "./dist/db/drizzle.d.ts"
     }
   },
   "scripts": {
@@ -37,15 +41,20 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
     "better-sqlite3": "^11.0.0",
+    "drizzle-orm": "^0.45.2",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
+    "drizzle-orm": ">=0.30.0",
     "pg": ">=8.0.0",
     "mysql2": ">=3.0.0",
     "better-sqlite3": ">=9.0.0"
   },
   "peerDependenciesMeta": {
+    "drizzle-orm": {
+      "optional": true
+    },
     "pg": {
       "optional": true
     },
