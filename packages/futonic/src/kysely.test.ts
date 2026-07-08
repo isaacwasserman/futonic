@@ -51,14 +51,14 @@ test("CamelCasePlugin maps camelCase queries to snake_case columns", async () =>
 	await db.destroy();
 });
 
-test("prefixed camelCase keys resolve to the prefixed physical table", async () => {
-	// The Drizzle generator names physical tables `${prefix}_${name}`; the Kysely
-	// schema exposes the matching `${prefix}${Capitalize<key>}` key. This proves
-	// the two agree: a query written against the typed key reaches the real table.
+test("a bare logical query hits the prefixed physical table at runtime", async () => {
+	// The Drizzle generator names physical tables `${prefix}_${name}`; the caller
+	// queries the bare logical name and the TablePrefixPlugin rewrites it to that
+	// physical name. Multi-word names exercise the CamelCase + prefix ordering.
 	const serviceSchema = {
 		tables: {
-			tickets: {
-				name: "tickets",
+			ticketEvents: {
+				name: "ticket_events",
 				columns: {
 					id: { type: "integer", primaryKey: true },
 					fullName: { type: "string" },
@@ -72,12 +72,13 @@ test("prefixed camelCase keys resolve to the prefixed physical table", async () 
 		dialect: "sqlite",
 		prefix: "ticketing",
 	});
-	const physicalName = getTableName(drizzle.ticketingTickets);
-	expect(physicalName).toBe("ticketing_tickets");
+	const physicalName = getTableName(drizzle.ticketingTicketEvents);
+	expect(physicalName).toBe("ticketing_ticket_events");
 
-	const db = createKysely<typeof serviceSchema, "ticketing">(
+	const db = createKysely<typeof serviceSchema>(
 		createSqliteConnection(),
 		"sqlite",
+		"ticketing",
 	);
 	await sql
 		.raw(
@@ -85,14 +86,14 @@ test("prefixed camelCase keys resolve to the prefixed physical table", async () 
 		)
 		.execute(db);
 
-	// The key is `ticketingTickets` (prefixed) and typed; the CamelCasePlugin
-	// rewrites it to the `ticketing_tickets` physical table.
+	// The caller queries the bare logical name; the plugin routes it to the
+	// prefixed physical table. Querying the unprefixed table would fail.
 	await db
-		.insertInto("ticketingTickets")
+		.insertInto("ticketEvents")
 		.values({ id: 1, fullName: "Ada" })
 		.execute();
 	const row = await db
-		.selectFrom("ticketingTickets")
+		.selectFrom("ticketEvents")
 		.select(["id", "fullName"])
 		.executeTakeFirstOrThrow();
 	expect(row).toEqual({ id: 1, fullName: "Ada" });
@@ -100,24 +101,42 @@ test("prefixed camelCase keys resolve to the prefixed physical table", async () 
 	await db.destroy();
 });
 
-test("the Kysely schema is keyed only by the prefixed name", () => {
+test("without a prefix, table names are left unchanged", async () => {
+	const db = createKysely<ServiceDBSchema>(createSqliteConnection(), "sqlite");
+	await sql`create table tickets (id integer primary key)`.execute(db);
+
+	// No prefix plugin, so the bare name maps straight through.
+	await (db as unknown as Kysely<any>)
+		.insertInto("tickets")
+		.values({ id: 1 })
+		.execute();
+	const row = await (db as unknown as Kysely<any>)
+		.selectFrom("tickets")
+		.select("id")
+		.executeTakeFirstOrThrow();
+	expect(row).toEqual({ id: 1 });
+
+	await db.destroy();
+});
+
+test("the Kysely schema is keyed by the bare logical name", () => {
 	type Schema = {
-		tables: { tickets: { name: "tickets"; columns: Record<string, never> } };
+		tables: {
+			ticketEvents: { name: "ticket_events"; columns: Record<string, never> };
+		};
 	};
 	// Extract the schema's table keys from the Kysely instance's DB type.
-	type Keys = KyselyFromServiceDBSchema<Schema, "ticketing"> extends Kysely<
-		infer DB
-	>
+	type Keys = KyselyFromServiceDBSchema<Schema> extends Kysely<infer DB>
 		? keyof DB
 		: never;
 
-	const prefixed: Keys = "ticketingTickets";
-	expect(prefixed).toBe("ticketingTickets");
+	const logical: Keys = "ticketEvents";
+	expect(logical).toBe("ticketEvents");
 
-	// The bare logical name is NOT a valid key — this must not compile.
-	// @ts-expect-error the schema is keyed by the prefixed name only
-	const bare: Keys = "tickets";
-	expect(bare).toBeDefined();
+	// The prefixed name is NOT a key — the prefix is applied at runtime, not here.
+	// @ts-expect-error the schema is keyed by the bare logical name
+	const prefixed: Keys = "ticketingTicketEvents";
+	expect(prefixed).toBeDefined();
 });
 
 test("each provider selects a distinct dialect", () => {
