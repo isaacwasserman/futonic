@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { type } from "arktype";
-import { createEndpoint } from "better-call";
 import { createNamedClient } from "./named-client";
 import { createFutonicServiceConstructor } from "./service";
 import { createSqliteConnection } from "./test-helpers";
@@ -17,19 +16,15 @@ function buildService() {
 			},
 		},
 		configSchema: type({ token: "string" }),
-		endpoints: (use) => ({
-			createTicket: createEndpoint(
+		endpoints: (defineEndpoint) => ({
+			createTicket: defineEndpoint(
 				"/tickets",
-				{ method: "POST", body: type({ title: "string" }), use },
+				{ method: "POST", body: type({ title: "string" }) },
 				async (ctx) => ({ id: ctx.body.title }),
 			),
-			listTickets: createEndpoint(
-				"/tickets",
-				{ method: "GET", use },
-				async () => ({
-					items: ["a", "b"],
-				}),
-			),
+			listTickets: defineEndpoint("/tickets", { method: "GET" }, async () => ({
+				items: ["a", "b"],
+			})),
 		}),
 	});
 

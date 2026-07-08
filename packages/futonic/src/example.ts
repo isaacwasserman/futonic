@@ -1,5 +1,4 @@
 import { type } from "arktype";
-import { createEndpoint } from "better-call";
 import Database from "better-sqlite3";
 import { createNamedClient } from "./named-client";
 import { createFutonicServiceConstructor } from "./service";
@@ -25,8 +24,8 @@ const createTicketingService = createFutonicServiceConstructor({
 	configSchema: type({
 		configVarA: "string",
 	}),
-	endpoints: (use) => ({
-		createTicket: createEndpoint(
+	endpoints: (defineEndpoint) => ({
+		createTicket: defineEndpoint(
 			"/tickets",
 			{
 				method: "POST",
@@ -35,7 +34,6 @@ const createTicketingService = createFutonicServiceConstructor({
 					summary: "string",
 					"details?": "string",
 				}),
-				use,
 			},
 			async (ctx) => {
 				// `db`, `config`, and `logger` are injected by the service middleware.
