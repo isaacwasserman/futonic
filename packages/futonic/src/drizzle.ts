@@ -4,11 +4,6 @@
  * Converts a service's dialect-agnostic `ServiceDBSchema` into a record of
  * Drizzle table objects for a specific SQL dialect. Hosts feed those tables
  * into their own Drizzle schema so `drizzle-kit` can produce migrations.
- *
- * The return type is fully inferred from the schema: when the schema is passed
- * with literal types (a `const` binding or `satisfies ServiceDBSchema`), each
- * generated table carries its real Drizzle column types, so services can export
- * typed rows via `typeof tables.tickets.$inferSelect`.
  */
 
 import type {
@@ -90,7 +85,6 @@ type TableConstructor = (
 const pgBytea = pgCustomType<{ data: Buffer }>({ dataType: () => "bytea" });
 const mysqlBlob = mysqlCustomType<{ data: Buffer }>({ dataType: () => "blob" });
 
-/** Maps a dialect to its Drizzle table constructor. */
 const TABLE_CONSTRUCTORS: Record<DrizzleDialect, TableConstructor> = {
 	pg: (name, columns) => pgTable(name, columns),
 	mysql: (name, columns) => mysqlTable(name, columns),
@@ -278,7 +272,6 @@ function buildColumn(
 	}
 
 	if (column.primaryKey) builder = builder.primaryKey();
-	// A column is NOT NULL unless explicitly marked optional.
 	if (!column.optional) builder = builder.notNull();
 	if (column.defaultValue !== undefined)
 		builder = builder.default(column.defaultValue);

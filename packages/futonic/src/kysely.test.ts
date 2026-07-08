@@ -86,8 +86,6 @@ test("a bare logical query hits the prefixed physical table at runtime", async (
 		)
 		.execute(db);
 
-	// The caller queries the bare logical name; the plugin routes it to the
-	// prefixed physical table. Querying the unprefixed table would fail.
 	await db
 		.insertInto("ticketEvents")
 		.values({ id: 1, fullName: "Ada" })

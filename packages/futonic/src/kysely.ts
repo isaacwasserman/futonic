@@ -51,10 +51,7 @@ type RowType<T extends TableDefinition> = {
 
 /**
  * The Kysely schema is keyed by the schema's *logical* (camelCase) table keys —
- * the same names the caller writes, e.g. `db.selectFrom("ticketEvents")`. The
- * generated DDL names the physical tables `${prefix}_${name}` (snake_case); the
- * `TablePrefixPlugin` and `CamelCasePlugin` on the instance rewrite the logical
- * name to that physical name at query time, so the prefix is invisible here.
+ * the same names the caller writes, e.g. `db.selectFrom("ticketEvents")`.
  */
 type KyselySchema<S extends ServiceDBSchema> = {
 	[TableName in keyof S["tables"]]: RowType<S["tables"][TableName]>;
@@ -126,15 +123,7 @@ export type DatabaseProvider = "pg" | "mysql" | "sqlite";
  */
 export type DatabaseConnection = PostgresPool | MysqlPool | SqliteDatabase;
 
-/**
- * Build a typed Kysely instance for a provider.
- *
- * A `CamelCasePlugin` is always installed so endpoints query in camelCase while
- * the underlying (snake_case) columns stay untouched. When a `prefix` is given,
- * a `TablePrefixPlugin` rewrites each bare table name to `${prefix}_${name}`, so
- * callers query the logical name (`"tickets"`) and the physical, prefixed table
- * (`ticketing_tickets`, as the Drizzle generator names it) is hit at runtime.
- */
+/** Build a typed Kysely instance for a provider. */
 export function createKysely<TDBSchema extends ServiceDBSchema>(
 	connection: DatabaseConnection,
 	provider: DatabaseProvider,
@@ -153,8 +142,6 @@ export function createKysely<TDBSchema extends ServiceDBSchema>(
 			break;
 	}
 
-	// The prefix plugin runs after CamelCasePlugin, so it prepends to the already
-	// snake_cased table identifier (`ticket_events` → `ticketing_ticket_events`).
 	const plugins = prefix
 		? [new CamelCasePlugin(), new TablePrefixPlugin(prefix)]
 		: [new CamelCasePlugin()];

@@ -13,8 +13,6 @@ const dbSchema = {
 	},
 } as const;
 
-// --- validation -----------------------------------------------------------
-
 test("rejects a service id that is not all-lowercase", () => {
 	expect(() =>
 		createFutonicServiceConstructor({
@@ -77,8 +75,6 @@ test("throws when the provided config fails the config schema", () => {
 		}),
 	).toThrow(/Invalid config/);
 });
-
-// --- construction & surface ----------------------------------------------
 
 function buildService(logger?: Logger) {
 	const make = createFutonicServiceConstructor({

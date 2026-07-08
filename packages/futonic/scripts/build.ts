@@ -23,10 +23,8 @@ await Bun.build({
 	],
 });
 
-// Generate declarations (build config excludes tests + test helpers)
 await $`bunx tsc -p tsconfig.build.json --emitDeclarationOnly`;
 
-// Copy root README into package for npm
 await $`cp ../../README.md ./README.md`;
 
 console.log("[futonic] Build complete.");

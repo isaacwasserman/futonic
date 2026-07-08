@@ -2,4 +2,4 @@
 "futonic": patch
 ---
 
-Prefix the Kysely schema keys so they match the generated physical table names. The Drizzle generator names tables `${serviceId}_${name}` and keys its members `${serviceId}${Capitalize<key>}`, but the Kysely schema was keyed by the bare logical name, so endpoints queried the wrong (unprefixed) table. The Kysely schema is now keyed by the same prefixed camelCase name, and the service id is threaded through as the prefix, so the `CamelCasePlugin` rewrites the key to the real physical table.
+Apply the service's table prefix to Kysely queries at runtime. The Drizzle generator names physical tables `${serviceId}_${name}`, but Kysely queried the bare logical name and so hit the wrong (unprefixed) table. The service id is now threaded through to `createKysely` as a prefix, and a `TablePrefixPlugin` rewrites each table reference to its physical `${serviceId}_${name}` name at query time. Endpoints keep querying the bare logical name, so the Kysely schema type is unchanged.
