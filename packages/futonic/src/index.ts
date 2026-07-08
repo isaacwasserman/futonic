@@ -1,30 +1,5 @@
-// Core
-export { createService } from "./core/service";
-export type {
-	EmbeddableService,
-	RunnableService,
-	ServiceConfig,
-} from "./core/service";
-export type {
-	ServiceContext,
-	Logger,
-	MountInfo as HostInfo,
-	ResolvedConfig,
-} from "./core/context";
-
-// Database
-export type {
-	ServiceDBSchema,
-	TableDefinition,
-	FieldDefinition,
-} from "./db/schema";
-export type {
-	DatabaseConnection,
-	DrizzleDatabase,
-} from "./db/kysely-factory";
-export type {
-	InternalAdapter,
-	TableAdapter,
-	FindManyOptions,
-	Where,
-} from "./db/internal-adapter";
+export * from "./db-schema";
+export * from "./drizzle";
+export * from "./kysely";
+export * from "./named-client";
+export * from "./service";
