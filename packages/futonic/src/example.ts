@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import Database from "better-sqlite3";
-import { createNamedClient, toNamedClientRoutes } from "./named-client";
+import { createClientFromManifest, toNamedClientRoutes } from "./named-client";
 import { createFutonicServiceConstructor } from "./service";
 
 /* IN SERVICE CODEBASE */
@@ -71,7 +71,7 @@ const handler = ticketingService.handler;
 // Name-keyed client — call endpoints by their record key instead of path.
 // In-process the endpoints are on hand, so the route manifest comes straight
 // from them; for the browser, codegen a static manifest instead (see codegen).
-const named = createNamedClient(
+const named = createClientFromManifest(
 	toNamedClientRoutes(ticketingService.endpoints),
 	{
 		baseURL: "http://localhost/api/ticketing",

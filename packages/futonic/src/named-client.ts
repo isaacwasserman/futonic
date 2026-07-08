@@ -8,9 +8,9 @@
  *
  * The client is driven by a plain, serializable route manifest rather than the
  * live endpoints object, so it can be built in the browser without importing
- * any server code. Derive the manifest server-side with `toNamedClientRoutes`
- * (or read it off a constructed service's `clientRoutes`) and hand the browser
- * only that data plus the endpoint types (via `import type`).
+ * any server code. In-process, derive the manifest with `toNamedClientRoutes`;
+ * for the browser, codegen a static manifest module (see `codegen.ts`) so the
+ * browser gets only that data plus the endpoint types (via `import type`).
  */
 
 import type {
@@ -72,7 +72,7 @@ declare const ENDPOINTS: unique symbol;
 /**
  * A serializable route manifest keyed by endpoint record name. Plain data
  * (no handlers, schemas, or db references), so it is safe to ship to the
- * browser. The phantom `TEndpoints` brand lets `createNamedClient` recover the
+ * browser. The phantom `TEndpoints` brand lets `createClientFromManifest` recover the
  * endpoint types for inference.
  */
 export type NamedClientRoutes<TEndpoints extends Record<string, Endpoint>> = {
@@ -89,7 +89,7 @@ function routeKey(method: string, path: string): string {
 /**
  * Extracts a serializable route manifest from a live endpoints record. Runs
  * wherever the endpoints are available (server or shared code); the result is
- * plain data safe to pass to `createNamedClient` in the browser.
+ * plain data safe to pass to `createClientFromManifest` in the browser.
  */
 export function toNamedClientRoutes<
 	TEndpoints extends Record<string, Endpoint>,
@@ -111,16 +111,18 @@ export function toNamedClientRoutes<
  * endpoints — so it is safe to build in the browser:
  *
  * ```ts
- * import { createNamedClient } from "futonic/client";
+ * import { createClientFromManifest } from "futonic/client";
  * import type { ticketingService } from "@acme/ticketing";
  *
- * const client = createNamedClient<typeof ticketingService.endpoints>(routes, {
+ * const client = createClientFromManifest<typeof ticketingService.endpoints>(routes, {
  *   baseURL: "/api/ticketing",
  * });
  * const res = await client.createTicket({ body: { title, summary } });
  * ```
  */
-export function createNamedClient<TEndpoints extends Record<string, Endpoint>>(
+export function createClientFromManifest<
+	TEndpoints extends Record<string, Endpoint>,
+>(
 	routes: NamedClientRoutes<TEndpoints>,
 	options?: ClientOptions,
 ): NamedClient<TEndpoints> {

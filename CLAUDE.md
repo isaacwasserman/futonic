@@ -14,3 +14,8 @@ Do NOT write:
 - Multi-paragraph explanations of why one approach was chosen over another.
 
 If a comment is removed and a future reader would still understand the code, the comment shouldn't have been there. If you come across existing comments that violate these rules while working in a file, ask the user whether they can be removed rather than silently deleting them or leaving them in place.
+
+## README
+`packages/futonic/README.md` is the canonical, feature-complete walkthrough of building an example service with the package. Whenever you add, remove, or change a public-facing feature (a package export, an entry point, the service-definition shape, the client, or codegen), update the README in the same change so it stays accurate.
+
+Keep it the simplest possible guide to a feature-complete example: one cohesive example service that exercises every feature, explained in the fewest words that still work end to end. Prefer runnable code over prose, cut anything a reader wouldn't need to get the example working, and don't let it drift into API reference or design rationale.

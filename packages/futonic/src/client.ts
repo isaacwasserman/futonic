@@ -12,9 +12,9 @@
  * });
  * ```
  */
-export { createClient } from "better-call/client";
+export { type ClientOptions, createClient } from "better-call/client";
 export {
-	createNamedClient,
+	createClientFromManifest,
 	type NamedClient,
 	type NamedClientRoutes,
 	type NamedRoute,
