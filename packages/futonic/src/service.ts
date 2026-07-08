@@ -5,6 +5,7 @@ import {
 	type Endpoint,
 	type Middleware,
 	type Router,
+	createEndpoint,
 	createMiddleware,
 	createRouter,
 } from "better-call";
@@ -64,6 +65,15 @@ function createServiceMiddleware<TConfig extends ServiceConfig, TDb>(
 	return createMiddleware(async () => ({ serviceCtx }));
 }
 
+/**
+ * A pre-bound `createEndpoint` that spreads the service middleware into every
+ * endpoint's `use`, so handlers read `ctx.context.serviceCtx` (typed
+ * `{ db, config, logger }`) without wiring middleware per endpoint.
+ */
+export type DefineEndpoint<TConfig extends ServiceConfig, TDb> = ReturnType<
+	typeof createEndpoint.create<{ use: [ServiceMiddleware<TConfig, TDb>] }>
+>;
+
 // --- Service methods ------------------------------------------------------
 
 /** A service method implementation, with access to the service context. */
@@ -112,12 +122,15 @@ export type ServiceDefinition<
 	dbSchema: TDBSchema;
 	configSchema: StandardSchemaV1<TConfig>;
 	/**
-	 * Define endpoints with better-call's `createEndpoint`, spreading the passed
-	 * `use` middleware into each endpoint's `use` so handlers can read
+	 * Define endpoints with the passed `defineEndpoint` helper — a `createEndpoint`
+	 * that already carries the service middleware, so handlers can read
 	 * `ctx.context.serviceCtx` (typed `{ db, config, logger }`).
 	 */
 	endpoints: (
-		use: [ServiceMiddleware<TConfig, KyselyFromServiceDBSchema<TDBSchema>>],
+		defineEndpoint: DefineEndpoint<
+			TConfig,
+			KyselyFromServiceDBSchema<TDBSchema>
+		>,
 	) => TEndpoints;
 	/**
 	 * Define non-HTTP methods via the passed `define` helper; each receives the
@@ -250,9 +263,10 @@ export function createFutonicServiceConstructor<
 			KyselyFromServiceDBSchema<TDBSchema>
 		> = { db, config, logger };
 
-		const endpoints = definition.endpoints([
-			createServiceMiddleware(serviceCtx),
-		]);
+		const defineEndpoint = createEndpoint.create({
+			use: [createServiceMiddleware(serviceCtx)],
+		}) as DefineEndpoint<TConfig, KyselyFromServiceDBSchema<TDBSchema>>;
+		const endpoints = definition.endpoints(defineEndpoint);
 		const router = createRouter(endpoints, { openapi: { disabled: true } });
 
 		const define = ((impl: AnyServiceMethodImpl) =>

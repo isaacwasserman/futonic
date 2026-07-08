@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { type } from "arktype";
-import { createEndpoint } from "better-call";
 import { type Logger, createFutonicServiceConstructor } from "./service";
 import { createSqliteConnection } from "./test-helpers";
 
@@ -81,10 +80,10 @@ function buildService(logger?: Logger) {
 		id: "ticketing",
 		dbSchema,
 		configSchema: type({ token: "string" }),
-		endpoints: (use) => ({
-			createTicket: createEndpoint(
+		endpoints: (defineEndpoint) => ({
+			createTicket: defineEndpoint(
 				"/tickets",
-				{ method: "POST", body: type({ title: "string" }), use },
+				{ method: "POST", body: type({ title: "string" }) },
 				async (ctx) => {
 					ctx.context.serviceCtx.logger.info("made", ctx.body.title);
 					return { id: ctx.body.title };
