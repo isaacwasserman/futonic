@@ -194,7 +194,7 @@ export type FutonicServiceConstructor<
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
 	TServiceId extends string,
-> = <TProvider extends DatabaseProvider>(options: {
+> = (<TProvider extends DatabaseProvider>(options: {
 	config: TConfig;
 	database: { connection: DatabaseConnection; provider: TProvider };
 	logger?: Logger;
@@ -204,7 +204,16 @@ export type FutonicServiceConstructor<
 	TDBSchema,
 	TProvider,
 	TServiceId
->;
+>) & {
+	/** The static definition — lets codegen extract client routes without a db. */
+	definition: ServiceDefinition<
+		TDBSchema,
+		TConfig,
+		TEndpoints,
+		TServiceMethods,
+		TServiceId
+	>;
+};
 
 export function createFutonicServiceConstructor<
 	TDBSchema extends ServiceDBSchema,
@@ -232,7 +241,7 @@ export function createFutonicServiceConstructor<
 > {
 	validateDefinition(definition.id, definition.dbSchema);
 
-	return <TProvider extends DatabaseProvider>(options: {
+	const construct = <TProvider extends DatabaseProvider>(options: {
 		config: TConfig;
 		database: { connection: DatabaseConnection; provider: TProvider };
 		logger?: Logger;
@@ -297,6 +306,14 @@ export function createFutonicServiceConstructor<
 			}),
 		};
 	};
+
+	return Object.assign(construct, { definition }) as FutonicServiceConstructor<
+		TDBSchema,
+		TConfig,
+		TEndpoints,
+		TServiceMethods,
+		TServiceId
+	>;
 }
 
 /** Re-export better-call's typesafe client for consumers. */
