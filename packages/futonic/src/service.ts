@@ -133,7 +133,12 @@ export type ServiceDefinition<
 	 * `ctx.context.serviceCtx` (typed `{ db, config, logger }`).
 	 */
 	endpoints: (
-		use: [ServiceMiddleware<TConfig, KyselyFromServiceDBSchema<TDBSchema>>],
+		use: [
+			ServiceMiddleware<
+				TConfig,
+				KyselyFromServiceDBSchema<TDBSchema, TServiceId>
+			>,
+		],
 	) => TEndpoints;
 	/**
 	 * Define non-HTTP methods via the passed `define` helper; each receives the
@@ -141,7 +146,10 @@ export type ServiceDefinition<
 	 * functions under `service.serviceMethods`.
 	 */
 	serviceMethods?: (
-		define: ServiceMethodBuilder<TConfig, KyselyFromServiceDBSchema<TDBSchema>>,
+		define: ServiceMethodBuilder<
+			TConfig,
+			KyselyFromServiceDBSchema<TDBSchema, TServiceId>
+		>,
 	) => TServiceMethods;
 };
 
@@ -260,11 +268,11 @@ export function createFutonicServiceConstructor<
 		}
 		const config = configResult.value;
 
-		const db = createKysely<TDBSchema>(connection, provider);
+		const db = createKysely<TDBSchema, TServiceId>(connection, provider);
 		const logger = options.logger ?? createDefaultLogger(definition.id);
 		const serviceCtx: ServiceContext<
 			TConfig,
-			KyselyFromServiceDBSchema<TDBSchema>
+			KyselyFromServiceDBSchema<TDBSchema, TServiceId>
 		> = { db, config, logger };
 
 		const endpoints = definition.endpoints([
@@ -276,7 +284,7 @@ export function createFutonicServiceConstructor<
 		const define = ((impl: AnyServiceMethodImpl) =>
 			impl) as ServiceMethodBuilder<
 			TConfig,
-			KyselyFromServiceDBSchema<TDBSchema>
+			KyselyFromServiceDBSchema<TDBSchema, TServiceId>
 		>;
 		const methodImpls = (definition.serviceMethods?.(define) ?? {}) as Record<
 			string,

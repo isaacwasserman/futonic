@@ -1,7 +1,13 @@
 import { expect, test } from "bun:test";
+import { getTableName } from "drizzle-orm";
 import { Kysely, sql } from "kysely";
 import type { ServiceDBSchema } from "./db-schema";
-import { type DatabaseConnection, createKysely } from "./kysely";
+import { generateDrizzleSchema } from "./drizzle";
+import {
+	type DatabaseConnection,
+	type KyselyFromServiceDBSchema,
+	createKysely,
+} from "./kysely";
 import { createSqliteConnection } from "./test-helpers";
 
 test("returns a Kysely bound to the sqlite connection that runs queries", async () => {
@@ -43,6 +49,75 @@ test("CamelCasePlugin maps camelCase queries to snake_case columns", async () =>
 	expect(row).toEqual({ id: 1, fullName: "Ada" });
 
 	await db.destroy();
+});
+
+test("prefixed camelCase keys resolve to the prefixed physical table", async () => {
+	// The Drizzle generator names physical tables `${prefix}_${name}`; the Kysely
+	// schema exposes the matching `${prefix}${Capitalize<key>}` key. This proves
+	// the two agree: a query written against the typed key reaches the real table.
+	const serviceSchema = {
+		tables: {
+			tickets: {
+				name: "tickets",
+				columns: {
+					id: { type: "integer", primaryKey: true },
+					fullName: { type: "string" },
+				},
+			},
+		},
+	} as const satisfies ServiceDBSchema;
+
+	const drizzle = generateDrizzleSchema({
+		serviceSchema,
+		dialect: "sqlite",
+		prefix: "ticketing",
+	});
+	const physicalName = getTableName(drizzle.ticketingTickets);
+	expect(physicalName).toBe("ticketing_tickets");
+
+	const db = createKysely<typeof serviceSchema, "ticketing">(
+		createSqliteConnection(),
+		"sqlite",
+	);
+	await sql
+		.raw(
+			`create table ${physicalName} (id integer primary key, full_name text)`,
+		)
+		.execute(db);
+
+	// The key is `ticketingTickets` (prefixed) and typed; the CamelCasePlugin
+	// rewrites it to the `ticketing_tickets` physical table.
+	await db
+		.insertInto("ticketingTickets")
+		.values({ id: 1, fullName: "Ada" })
+		.execute();
+	const row = await db
+		.selectFrom("ticketingTickets")
+		.select(["id", "fullName"])
+		.executeTakeFirstOrThrow();
+	expect(row).toEqual({ id: 1, fullName: "Ada" });
+
+	await db.destroy();
+});
+
+test("the Kysely schema is keyed only by the prefixed name", () => {
+	type Schema = {
+		tables: { tickets: { name: "tickets"; columns: Record<string, never> } };
+	};
+	// Extract the schema's table keys from the Kysely instance's DB type.
+	type Keys = KyselyFromServiceDBSchema<Schema, "ticketing"> extends Kysely<
+		infer DB
+	>
+		? keyof DB
+		: never;
+
+	const prefixed: Keys = "ticketingTickets";
+	expect(prefixed).toBe("ticketingTickets");
+
+	// The bare logical name is NOT a valid key — this must not compile.
+	// @ts-expect-error the schema is keyed by the prefixed name only
+	const bare: Keys = "tickets";
+	expect(bare).toBeDefined();
 });
 
 test("each provider selects a distinct dialect", () => {

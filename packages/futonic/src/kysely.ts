@@ -41,13 +41,26 @@ type RowType<T extends TableDefinition> = {
 	[K in keyof T["columns"]]: ColumnValueType<T["columns"][K]>;
 };
 
-type KyselySchema<S extends ServiceDBSchema> = {
-	[TableName in keyof S["tables"]]: RowType<S["tables"][TableName]>;
+/**
+ * The Kysely schema mirrors the Drizzle schema's *JS* keys: each logical table
+ * key `K` is exposed as `${TPrefix}${Capitalize<K>}` (e.g. `ticketingTickets`).
+ *
+ * The generated DDL names physical tables `${prefix}_${name}` (snake_case), so
+ * the `CamelCasePlugin` on the Kysely instance rewrites the prefixed camelCase
+ * key back to that snake_case physical name at query time. Keying by the bare
+ * logical name would query the unprefixed table and miss the real one.
+ */
+type KyselySchema<S extends ServiceDBSchema, TPrefix extends string> = {
+	[TableName in keyof S["tables"] &
+		string as `${TPrefix}${Capitalize<TableName>}`]: RowType<
+		S["tables"][TableName]
+	>;
 };
 
-export type KyselyFromServiceDBSchema<S extends ServiceDBSchema> = Kysely<
-	KyselySchema<S>
->;
+export type KyselyFromServiceDBSchema<
+	S extends ServiceDBSchema,
+	TPrefix extends string = string,
+> = Kysely<KyselySchema<S, TPrefix>>;
 
 /**
  * Which driver family the raw connection belongs to. Selects the Kysely dialect
@@ -70,10 +83,13 @@ export type DatabaseConnection = PostgresPool | MysqlPool | SqliteDatabase;
  * A `CamelCasePlugin` is always installed so endpoints query in camelCase while
  * the underlying (snake_case) tables/columns stay untouched.
  */
-export function createKysely<TDBSchema extends ServiceDBSchema>(
+export function createKysely<
+	TDBSchema extends ServiceDBSchema,
+	TPrefix extends string = string,
+>(
 	connection: DatabaseConnection,
 	provider: DatabaseProvider,
-): KyselyFromServiceDBSchema<TDBSchema> {
+): KyselyFromServiceDBSchema<TDBSchema, TPrefix> {
 	let dialect: Dialect;
 	switch (provider) {
 		case "pg":
@@ -90,5 +106,5 @@ export function createKysely<TDBSchema extends ServiceDBSchema>(
 	return new Kysely({
 		dialect,
 		plugins: [new CamelCasePlugin()],
-	}) as KyselyFromServiceDBSchema<TDBSchema>;
+	}) as KyselyFromServiceDBSchema<TDBSchema, TPrefix>;
 }
