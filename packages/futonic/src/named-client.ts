@@ -5,6 +5,12 @@
  * `client("@post/tickets", { body })`. This wraps it so endpoints can be called
  * by their record key instead: `client.createTicket({ body })`. Types are
  * derived from the endpoints, so each method's input and response stay inferred.
+ *
+ * The client is driven by a plain, serializable route manifest rather than the
+ * live endpoints object, so it can be built in the browser without importing
+ * any server code. Derive the manifest server-side with `toNamedClientRoutes`
+ * (or read it off a constructed service's `clientRoutes`) and hand the browser
+ * only that data plus the endpoint types (via `import type`).
  */
 
 import type {
@@ -58,6 +64,21 @@ export type NamedClient<TEndpoints extends Record<string, Endpoint>> = {
 	[K in keyof TEndpoints]: NamedCall<TEndpoints[K]>;
 };
 
+/** A single endpoint's routing info — the only runtime data the client needs. */
+export type NamedRoute = { method: string; path: string };
+
+declare const ENDPOINTS: unique symbol;
+
+/**
+ * A serializable route manifest keyed by endpoint record name. Plain data
+ * (no handlers, schemas, or db references), so it is safe to ship to the
+ * browser. The phantom `TEndpoints` brand lets `createNamedClient` recover the
+ * endpoint types for inference.
+ */
+export type NamedClientRoutes<TEndpoints extends Record<string, Endpoint>> = {
+	[K in keyof TEndpoints]: NamedRoute;
+} & { readonly [ENDPOINTS]?: TEndpoints };
+
 /** Computes the better-call path key for an endpoint (GET is bare, others `@method`). */
 function routeKey(method: string, path: string): string {
 	return method.toUpperCase() === "GET"
@@ -66,24 +87,50 @@ function routeKey(method: string, path: string): string {
 }
 
 /**
- * Wraps better-call's path-keyed client so endpoints can be called by name:
+ * Extracts a serializable route manifest from a live endpoints record. Runs
+ * wherever the endpoints are available (server or shared code); the result is
+ * plain data safe to pass to `createNamedClient` in the browser.
+ */
+export function toNamedClientRoutes<
+	TEndpoints extends Record<string, Endpoint>,
+>(endpoints: TEndpoints): NamedClientRoutes<TEndpoints> {
+	const routes: Record<string, NamedRoute> = {};
+
+	for (const [name, endpoint] of Object.entries(endpoints)) {
+		const rawMethod = endpoint.options.method;
+		const method = Array.isArray(rawMethod) ? rawMethod[0] : String(rawMethod);
+		routes[name] = { method, path: endpoint.path };
+	}
+
+	return routes as NamedClientRoutes<TEndpoints>;
+}
+
+/**
+ * Wraps better-call's path-keyed client so endpoints can be called by name.
+ * Takes only a serializable route manifest and options — never the live
+ * endpoints — so it is safe to build in the browser:
  *
  * ```ts
- * const client = createNamedClient(service.endpoints, { baseURL });
+ * import { createNamedClient } from "futonic/client";
+ * import type { ticketingService } from "@acme/ticketing";
+ *
+ * const client = createNamedClient<typeof ticketingService.endpoints>(routes, {
+ *   baseURL: "/api/ticketing",
+ * });
  * const res = await client.createTicket({ body: { title, summary } });
  * ```
  */
 export function createNamedClient<TEndpoints extends Record<string, Endpoint>>(
-	endpoints: TEndpoints,
+	routes: NamedClientRoutes<TEndpoints>,
 	options?: ClientOptions,
 ): NamedClient<TEndpoints> {
 	const base = createClient<TEndpoints>(options);
 	const client: Record<string, (opts?: unknown) => unknown> = {};
 
-	for (const [name, endpoint] of Object.entries(endpoints)) {
-		const rawMethod = endpoint.options.method;
-		const method = Array.isArray(rawMethod) ? rawMethod[0] : String(rawMethod);
-		const key = routeKey(method, endpoint.path);
+	for (const [name, route] of Object.entries(
+		routes as Record<string, NamedRoute>,
+	)) {
+		const key = routeKey(route.method, route.path);
 		client[name] = (opts?: unknown) =>
 			(base as (path: string, opts?: unknown) => unknown)(key, opts);
 	}

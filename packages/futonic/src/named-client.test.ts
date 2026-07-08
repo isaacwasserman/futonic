@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { type } from "arktype";
-import { createNamedClient } from "./named-client";
+import { createNamedClient, toNamedClientRoutes } from "./named-client";
 import { createFutonicServiceConstructor } from "./service";
 import { createSqliteConnection } from "./test-helpers";
 
@@ -37,7 +37,7 @@ function buildService() {
 // Route the client's fetch straight into the service handler so the whole
 // name → path → handler round trip is exercised without a real network.
 function namedClientFor(svc: ReturnType<typeof buildService>) {
-	return createNamedClient(svc.endpoints, {
+	return createNamedClient(toNamedClientRoutes(svc.endpoints), {
 		baseURL: "http://localhost",
 		customFetchImpl: (input, init) =>
 			svc.handler(
