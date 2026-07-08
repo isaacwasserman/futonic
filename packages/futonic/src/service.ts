@@ -49,7 +49,8 @@ function createDefaultLogger(id: string): Logger {
 	};
 }
 
-export type ServiceConfig = Record<string, unknown> | {}
+// biome-ignore lint/complexity/noBannedTypes: `{}` intentionally allows an empty config
+export type ServiceConfig = Record<string, unknown> | {};
 
 /** The context handed to every endpoint and service method. */
 export type ServiceContext<TConfig extends Record<string, unknown>, TDb> = {
@@ -96,10 +97,10 @@ export type AnyServiceMethodImpl = ServiceMethodImpl<any, any, any, any>;
  * The helper passed to the `serviceMethods` factory. It's an identity function
  * at runtime, but as a generic it captures each method's input/output types.
  */
-export type ServiceMethodBuilder<
-	TConfig extends ServiceConfig,
-	TDb,
-> = <TInput, TOutput>(
+export type ServiceMethodBuilder<TConfig extends ServiceConfig, TDb> = <
+	TInput,
+	TOutput,
+>(
 	impl: ServiceMethodImpl<TConfig, TDb, TInput, TOutput>,
 ) => ServiceMethodImpl<TConfig, TDb, TInput, TOutput>;
 
@@ -167,10 +168,10 @@ function validateDefinition(id: string, dbSchema: ServiceDBSchema): void {
 
 export type FutonicService<
 	TEndpoints extends Record<string, Endpoint> = Record<string, Endpoint>,
-	TServiceMethods extends Record<
+	TServiceMethods extends Record<string, AnyServiceMethodImpl> = Record<
 		string,
-		AnyServiceMethodImpl
-	> = Record<string, never>,
+		never
+	>,
 	TDBSchema extends ServiceDBSchema = ServiceDBSchema,
 	TProvider extends DatabaseProvider = DatabaseProvider,
 	TServiceId extends string = string,

@@ -1,6 +1,6 @@
 import { type } from "arktype";
-import Database from "better-sqlite3";
 import { createEndpoint } from "better-call";
+import Database from "better-sqlite3";
 import { createNamedClient } from "./named-client";
 import { createFutonicServiceConstructor } from "./service";
 

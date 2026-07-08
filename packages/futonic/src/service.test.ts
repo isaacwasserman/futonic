@@ -1,7 +1,7 @@
+import { expect, test } from "bun:test";
 import { type } from "arktype";
 import { createEndpoint } from "better-call";
-import { expect, test } from "bun:test";
-import { createFutonicServiceConstructor, type Logger } from "./service";
+import { type Logger, createFutonicServiceConstructor } from "./service";
 import { createSqliteConnection } from "./test-helpers";
 
 const dbSchema = {
@@ -72,7 +72,6 @@ test("throws when the provided config fails the config schema", () => {
 
 	expect(() =>
 		make({
-			// biome-ignore lint/suspicious/noExplicitAny: intentionally invalid config
 			config: {} as any,
 			database: { connection: createSqliteConnection(), provider: "sqlite" },
 		}),
@@ -147,7 +146,9 @@ test("the http handler dispatches requests to endpoints", async () => {
 
 test("the http handler 404s unknown routes", async () => {
 	const svc = buildService();
-	const res = await svc.handler(new Request("http://x/nope", { method: "GET" }));
+	const res = await svc.handler(
+		new Request("http://x/nope", { method: "GET" }),
+	);
 	expect(res.status).toBe(404);
 });
 

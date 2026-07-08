@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
     "build": "bun run --cwd packages/futonic build",
     "test": "bun run --filter futonic test",
     "typecheck": "bun run --cwd packages/futonic typecheck",

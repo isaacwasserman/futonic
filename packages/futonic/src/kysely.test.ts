@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Kysely, sql } from "kysely";
 import type { ServiceDBSchema } from "./db-schema";
-import { createKysely, type DatabaseConnection } from "./kysely";
+import { type DatabaseConnection, createKysely } from "./kysely";
 import { createSqliteConnection } from "./test-helpers";
 
 test("returns a Kysely bound to the sqlite connection that runs queries", async () => {
@@ -10,10 +10,10 @@ test("returns a Kysely bound to the sqlite connection that runs queries", async 
 
 	await sql`create table t (id text primary key, n integer)`.execute(db);
 	await sql`insert into t (id, n) values ('a', 1), ('b', 2)`.execute(db);
-	const result =
-		await sql<{ id: string; n: number }>`select id, n from t order by id`.execute(
-			db,
-		);
+	const result = await sql<{
+		id: string;
+		n: number;
+	}>`select id, n from t order by id`.execute(db);
 
 	expect(result.rows).toEqual([
 		{ id: "a", n: 1 },
@@ -24,7 +24,6 @@ test("returns a Kysely bound to the sqlite connection that runs queries", async 
 });
 
 test("CamelCasePlugin maps camelCase queries to snake_case columns", async () => {
-	// biome-ignore lint/suspicious/noExplicitAny: ad-hoc table for the test
 	const db = createKysely<ServiceDBSchema>(
 		createSqliteConnection(),
 		"sqlite",
@@ -53,9 +52,7 @@ test("each provider selects a distinct dialect", () => {
 	const mysql = createKysely<ServiceDBSchema>(stub, "mysql");
 	const sqlite = createKysely<ServiceDBSchema>(stub, "sqlite");
 
-	// biome-ignore lint/suspicious/noExplicitAny: reaching into the executor for the test
 	const dialectName = (db: Kysely<any>) =>
-		// biome-ignore lint/suspicious/noExplicitAny: reaching into the executor for the test
 		(db as any).getExecutor().adapter.constructor.name;
 
 	expect(dialectName(pg)).not.toBe(dialectName(mysql));

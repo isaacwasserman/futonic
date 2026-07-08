@@ -7,7 +7,10 @@
  * derived from the endpoints, so each method's input and response stay inferred.
  */
 
-import type { BetterFetchOption, BetterFetchResponse } from "@better-fetch/fetch";
+import type {
+	BetterFetchOption,
+	BetterFetchResponse,
+} from "@better-fetch/fetch";
 import type { Endpoint } from "better-call";
 import { type ClientOptions, createClient } from "better-call/client";
 

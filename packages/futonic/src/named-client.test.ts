@@ -1,6 +1,6 @@
+import { expect, test } from "bun:test";
 import { type } from "arktype";
 import { createEndpoint } from "better-call";
-import { expect, test } from "bun:test";
 import { createNamedClient } from "./named-client";
 import { createFutonicServiceConstructor } from "./service";
 import { createSqliteConnection } from "./test-helpers";
@@ -23,9 +23,13 @@ function buildService() {
 				{ method: "POST", body: type({ title: "string" }), use },
 				async (ctx) => ({ id: ctx.body.title }),
 			),
-			listTickets: createEndpoint("/tickets", { method: "GET", use }, async () => ({
-				items: ["a", "b"],
-			})),
+			listTickets: createEndpoint(
+				"/tickets",
+				{ method: "GET", use },
+				async () => ({
+					items: ["a", "b"],
+				}),
+			),
 		}),
 	});
 
@@ -42,10 +46,7 @@ function namedClientFor(svc: ReturnType<typeof buildService>) {
 		baseURL: "http://localhost",
 		customFetchImpl: (input, init) =>
 			svc.handler(
-				new Request(
-					input as string | URL,
-					init as RequestInit | undefined,
-				),
+				new Request(input as string | URL, init as RequestInit | undefined),
 			),
 	});
 }
