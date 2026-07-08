@@ -1,17 +1,4 @@
-/**
- * The Futonic service constructor, built on better-call.
- *
- * Because endpoints are better-call `Endpoint`s and we expose the `router`, a
- * consumer gets a fully-inferred network client from
- * `createClient<typeof service.router>()` — no hand-rolled route manifest, no
- * threading of endpoint types. Endpoints are also directly callable, so
- * `service.endpoints` doubles as the in-process API.
- *
- * Service context (`db`, `config`, `logger`) is injected via a better-call
- * middleware, mirroring how better-auth injects its AuthContext. The same
- * context is bound into `serviceMethods` — arbitrary non-HTTP methods a service
- * can expose alongside its endpoints.
- */
+/** The Futonic service constructor, built on better-call. */
 
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import {
@@ -78,9 +65,6 @@ function createServiceMiddleware<TConfig extends ServiceConfig, TDb>(
 }
 
 // --- Service methods ------------------------------------------------------
-// Non-HTTP methods a service exposes alongside its endpoints. Authored with a
-// context argument (like an endpoint), then resolved by the constructor into
-// context-free functions bound to the running service's context.
 
 /** A service method implementation, with access to the service context. */
 export type ServiceMethodImpl<
@@ -242,7 +226,6 @@ export function createFutonicServiceConstructor<
 	}) => {
 		const { connection, provider } = options.database;
 
-		// Validate the caller-provided config against the service's schema.
 		const configResult = definition.configSchema["~standard"].validate(
 			options.config,
 		);
@@ -260,7 +243,7 @@ export function createFutonicServiceConstructor<
 		}
 		const config = configResult.value;
 
-		const db = createKysely<TDBSchema>(connection, provider);
+		const db = createKysely<TDBSchema>(connection, provider, definition.id);
 		const logger = options.logger ?? createDefaultLogger(definition.id);
 		const serviceCtx: ServiceContext<
 			TConfig,
@@ -272,7 +255,6 @@ export function createFutonicServiceConstructor<
 		]);
 		const router = createRouter(endpoints, { openapi: { disabled: true } });
 
-		// Resolve service methods by binding the context away.
 		const define = ((impl: AnyServiceMethodImpl) =>
 			impl) as ServiceMethodBuilder<
 			TConfig,
@@ -290,13 +272,9 @@ export function createFutonicServiceConstructor<
 		) as ResolveServiceMethods<TServiceMethods>;
 
 		return {
-			/** HTTP entry point. */
 			handler: (request: Request): Promise<Response> => router.handler(request),
-			/** better-call endpoints are directly callable — the in-process API. */
 			endpoints,
-			/** Exposed so `createClient<typeof service.router>()` can infer routes. */
 			router,
-			/** Non-HTTP methods, bound to the service context. */
 			serviceMethods,
 			drizzleSchema: generateDrizzleSchema({
 				serviceSchema: definition.dbSchema,
