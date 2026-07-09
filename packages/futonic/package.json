@@ -6,6 +6,7 @@
     "type": "git",
     "url": "git+https://github.com/isaacwasserman/futonic.git"
   },
+  "homepage": "https://github.com/isaacwasserman/futonic#readme",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -66,6 +67,6 @@
       "optional": true
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "README.md"],
   "license": "MIT"
 }
