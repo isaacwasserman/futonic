@@ -14,14 +14,14 @@ bun add futonic
 
 ## 1. Define the service
 
-`createFutonicServiceConstructor` returns a **constructor** that a host later calls with config and a database connection.
+`defineService` captures a service definition; `createFutonicServiceConstructor` turns it into a **constructor** that a host later calls with config and a database connection.
 
 ```ts
 // @acme/ticketing/src/service.ts
 import { type } from "arktype";
-import { createFutonicServiceConstructor } from "futonic";
+import { createFutonicServiceConstructor, defineService } from "futonic";
 
-export const createTicketingService = createFutonicServiceConstructor({
+export const ticketingDefinition = defineService({
   // Lowercase-letters-only id. Used to prefix table names (`ticketing_tickets`).
   id: "ticketing",
 
@@ -79,15 +79,28 @@ export const createTicketingService = createFutonicServiceConstructor({
     ),
   }),
 });
+
+export const createTicketingService =
+  createFutonicServiceConstructor(ticketingDefinition);
+```
+
+The Drizzle schema depends only on the definition and dialect — not on runtime config or a connection — so derive it with `generateServiceDrizzleSchema` and export a wrapper that bakes in the definition, leaving hosts to pass just the dialect:
+
+```ts
+// @acme/ticketing/src/service.ts (continued)
+import { type DrizzleDialect, generateServiceDrizzleSchema } from "futonic";
+
+export const ticketingDrizzleSchema = (dialect: DrizzleDialect) =>
+  generateServiceDrizzleSchema(ticketingDefinition, dialect);
 ```
 
 ## 2. Export the package
 
-Export the constructor. Consumers type their client from the service's `router`, so also export a type alias for it:
+Export the constructor and the schema wrapper. Consumers type their client from the service's `router`, so also export a type alias for it:
 
 ```ts
 // @acme/ticketing/src/index.ts
-export { createTicketingService } from "./service";
+export { createTicketingService, ticketingDrizzleSchema } from "./service";
 export type TicketingRouter = ReturnType<
   typeof import("./service").createTicketingService
 >["router"];
@@ -124,15 +137,17 @@ export const handler = ticketing.handler;
 await ticketing.serviceMethods.closeStaleTickets({ olderThanDays: 30 });
 ```
 
-A constructed service exposes: `handler`, `endpoints`, `router`, `serviceMethods`, and `drizzleSchema`.
+A constructed service exposes: `handler`, `endpoints`, `router`, and `serviceMethods`.
 
 ## 2. Migrate
 
-`ticketing.drizzleSchema` is a Drizzle table set (keyed and SQL-named by the service id). Re-export its tables from the schema file your drizzle-kit config points at, and migrations run against the host database alongside your own tables:
+`ticketingDrizzleSchema(dialect)` returns a Drizzle table set (keyed and SQL-named by the service id). Re-export its tables from the schema file your drizzle-kit config points at, and migrations run against the host database alongside your own tables:
 
 ```ts
 // schema.ts
-export const { tickets } = ticketing.drizzleSchema;
+import { ticketingDrizzleSchema } from "@acme/ticketing";
+
+export const { ticketingTickets } = ticketingDrizzleSchema("sqlite");
 ```
 
 ## 3. Call it from a client
@@ -154,6 +169,6 @@ res.data; // { id: string } — inferred from the router
 
 | Import | Exports you'll use | Browser-safe |
 | --- | --- | --- |
-| `futonic` | `createFutonicServiceConstructor` and db-schema types | No |
+| `futonic` | `createFutonicServiceConstructor`, `defineService`, `generateServiceDrizzleSchema`, and db-schema types | No |
 | `futonic/client` | `createClient`, `ClientOptions` | Yes |
-| `futonic/drizzle` | `generateDrizzleSchema` and Drizzle types | No |
+| `futonic/drizzle` | `generateDrizzleSchema`, `DrizzleDialect`, and Drizzle types | No |

@@ -1,11 +1,16 @@
 import { type } from "arktype";
 import { createClient } from "better-call/client";
 import Database from "better-sqlite3";
-import { createFutonicServiceConstructor } from "./service";
+import type { DrizzleDialect } from "./drizzle";
+import {
+	createFutonicServiceConstructor,
+	defineService,
+	generateServiceDrizzleSchema,
+} from "./service";
 
 /* IN SERVICE CODEBASE */
 
-const createTicketingService = createFutonicServiceConstructor({
+const ticketingDefinition = defineService({
 	id: "ticketing",
 	dbSchema: {
 		tables: {
@@ -58,12 +63,23 @@ const createTicketingService = createFutonicServiceConstructor({
 	}),
 });
 
+const createTicketingService =
+	createFutonicServiceConstructor(ticketingDefinition);
+
+// The Drizzle schema depends only on the definition and dialect — wrap the
+// generator so hosts can build the tables with just the dialect.
+const ticketingDrizzleSchema = (dialect: DrizzleDialect) =>
+	generateServiceDrizzleSchema(ticketingDefinition, dialect);
+
 /* IN HOST CODEBASE */
 
 const ticketingService = createTicketingService({
 	config: { configVarA: "something" },
 	database: { connection: new Database(":memory:"), provider: "sqlite" },
 });
+
+// Drizzle tables for migrations, keyed and SQL-named by the service id.
+const drizzleSchema = ticketingDrizzleSchema("sqlite");
 
 // HTTP entry point: (request: Request) => Promise<Response>
 const handler = ticketingService.handler;
@@ -84,3 +100,4 @@ const closed = await ticketingService.serviceMethods.closeStaleTickets({
 void handler;
 void created;
 void closed;
+void drizzleSchema;
