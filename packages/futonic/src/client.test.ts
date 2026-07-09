@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { type } from "arktype";
-import { createClientFromManifest, toNamedClientRoutes } from "./named-client";
+import { createClient } from "better-call/client";
 import { createFutonicServiceConstructor } from "./service";
 import { createSqliteConnection } from "./test-helpers";
 
@@ -35,9 +35,9 @@ function buildService() {
 }
 
 // Route the client's fetch straight into the service handler so the whole
-// name → path → handler round trip is exercised without a real network.
-function namedClientFor(svc: ReturnType<typeof buildService>) {
-	return createClientFromManifest(toNamedClientRoutes(svc.endpoints), {
+// client → path → handler round trip is exercised without a real network.
+function clientFor(svc: ReturnType<typeof buildService>) {
+	return createClient<typeof svc.router>({
 		baseURL: "http://localhost",
 		customFetchImpl: (input, init) =>
 			svc.handler(
@@ -46,29 +46,16 @@ function namedClientFor(svc: ReturnType<typeof buildService>) {
 	});
 }
 
-test("calls a POST endpoint by name with a typed body", async () => {
-	const svc = buildService();
-	const client = namedClientFor(svc);
+test("calls a POST endpoint by method + path with a typed body", async () => {
+	const client = clientFor(buildService());
 
-	const res = await client.createTicket({ body: { title: "hi" } });
+	const res = await client("@post/tickets", { body: { title: "hi" } });
 	expect(res.data).toEqual({ id: "hi" });
 });
 
-test("calls a GET endpoint by name with no arguments", async () => {
-	const svc = buildService();
-	const client = namedClientFor(svc);
+test("calls a GET endpoint by its bare path", async () => {
+	const client = clientFor(buildService());
 
-	const res = await client.listTickets();
+	const res = await client("/tickets");
 	expect(res.data).toEqual({ items: ["a", "b"] });
-});
-
-test("routes same-path endpoints by method (POST vs GET on /tickets)", async () => {
-	const svc = buildService();
-	const client = namedClientFor(svc);
-
-	const created = await client.createTicket({ body: { title: "z" } });
-	const listed = await client.listTickets();
-
-	expect(created.data).toEqual({ id: "z" });
-	expect(listed.data).toEqual({ items: ["a", "b"] });
 });
