@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { type } from "arktype";
-import { type Logger, createFutonicServiceConstructor } from "./service";
+import {
+	type Logger,
+	createFutonicServiceConstructor,
+	generateServiceDrizzleSchema,
+} from "./service";
 import { createSqliteConnection } from "./test-helpers";
 
 const dbSchema = {
@@ -147,7 +151,10 @@ test("the http handler 404s unknown routes", async () => {
 	expect(res.status).toBe(404);
 });
 
-test("exposes the prefixed drizzle schema", () => {
-	const svc = buildService();
-	expect(Object.keys(svc.drizzleSchema)).toContain("ticketingTickets");
+test("generates the prefixed drizzle schema from the definition and dialect", () => {
+	const schema = generateServiceDrizzleSchema(
+		{ id: "ticketing", dbSchema },
+		"sqlite",
+	);
+	expect(Object.keys(schema)).toContain("ticketingTickets");
 });

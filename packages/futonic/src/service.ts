@@ -10,7 +10,11 @@ import {
 	createRouter,
 } from "better-call";
 import type { ServiceDBSchema } from "./db-schema";
-import { type InferDrizzleSchema, generateDrizzleSchema } from "./drizzle";
+import {
+	type DrizzleDialect,
+	type InferDrizzleSchema,
+	generateDrizzleSchema,
+} from "./drizzle";
 import {
 	type DatabaseConnection,
 	type DatabaseProvider,
@@ -169,9 +173,6 @@ export type FutonicService<
 		string,
 		never
 	>,
-	TDBSchema extends ServiceDBSchema = ServiceDBSchema,
-	TProvider extends DatabaseProvider = DatabaseProvider,
-	TServiceId extends string = string,
 > = {
 	/** HTTP entry point. */
 	handler: (request: Request) => Promise<Response>;
@@ -184,27 +185,49 @@ export type FutonicService<
 	router: Router;
 	/** Non-HTTP methods, resolved to context-free functions. */
 	serviceMethods: ResolveServiceMethods<TServiceMethods>;
-	/** Drizzle tables for migrations, keyed and SQL-named by the service id. */
-	drizzleSchema: InferDrizzleSchema<TDBSchema, TProvider, TServiceId>;
 };
 
 export type FutonicServiceConstructor<
-	TDBSchema extends ServiceDBSchema,
 	TConfig extends ServiceConfig,
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
-	TServiceId extends string,
-> = <TProvider extends DatabaseProvider>(options: {
+> = (options: {
 	config: TConfig;
-	database: { connection: DatabaseConnection; provider: TProvider };
+	database: { connection: DatabaseConnection; provider: DatabaseProvider };
 	logger?: Logger;
-}) => FutonicService<
+}) => FutonicService<TEndpoints, TServiceMethods>;
+
+/**
+ * Identity helper that captures a service definition's types so the same
+ * definition can be shared between `createFutonicServiceConstructor` and
+ * `generateServiceDrizzleSchema`.
+ */
+export function defineService<
+	const TDBSchema extends ServiceDBSchema,
+	TConfig extends ServiceConfig = Record<string, never>,
+	TEndpoints extends Record<string, Endpoint> = Record<string, Endpoint>,
+	TServiceMethods extends Record<string, AnyServiceMethodImpl> = Record<
+		string,
+		never
+	>,
+	TServiceId extends string = string,
+>(
+	definition: ServiceDefinition<
+		TDBSchema,
+		TConfig,
+		TEndpoints,
+		TServiceMethods,
+		TServiceId
+	>,
+): ServiceDefinition<
+	TDBSchema,
+	TConfig,
 	TEndpoints,
 	TServiceMethods,
-	TDBSchema,
-	TProvider,
 	TServiceId
->;
+> {
+	return definition;
+}
 
 export function createFutonicServiceConstructor<
 	TDBSchema extends ServiceDBSchema,
@@ -223,18 +246,12 @@ export function createFutonicServiceConstructor<
 		TServiceMethods,
 		TServiceId
 	>,
-): FutonicServiceConstructor<
-	TDBSchema,
-	TConfig,
-	TEndpoints,
-	TServiceMethods,
-	TServiceId
-> {
+): FutonicServiceConstructor<TConfig, TEndpoints, TServiceMethods> {
 	validateDefinition(definition.id, definition.dbSchema);
 
-	return <TProvider extends DatabaseProvider>(options: {
+	return (options: {
 		config: TConfig;
-		database: { connection: DatabaseConnection; provider: TProvider };
+		database: { connection: DatabaseConnection; provider: DatabaseProvider };
 		logger?: Logger;
 	}) => {
 		const { connection, provider } = options.database;
@@ -290,13 +307,29 @@ export function createFutonicServiceConstructor<
 			endpoints,
 			router,
 			serviceMethods,
-			drizzleSchema: generateDrizzleSchema({
-				serviceSchema: definition.dbSchema,
-				dialect: provider,
-				prefix: definition.id,
-			}),
 		};
 	};
+}
+
+/**
+ * Builds a service's Drizzle tables from its definition and a target dialect —
+ * independent of any runtime config or database connection. Downstream services
+ * can wrap this and bake in their own definition so callers pass only a dialect;
+ * host applications then create the service's tables in Drizzle from the dialect.
+ */
+export function generateServiceDrizzleSchema<
+	const TDBSchema extends ServiceDBSchema,
+	TServiceId extends string,
+	D extends DrizzleDialect,
+>(
+	definition: { id: TServiceId; dbSchema: TDBSchema },
+	dialect: D,
+): InferDrizzleSchema<TDBSchema, D, TServiceId> {
+	return generateDrizzleSchema({
+		serviceSchema: definition.dbSchema,
+		dialect,
+		prefix: definition.id,
+	});
 }
 
 /** Re-export better-call's typesafe client for consumers. */
