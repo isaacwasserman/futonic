@@ -14,7 +14,13 @@ import type {
 	View,
 } from "drizzle-orm";
 import {
+	type MySqlBooleanBuilderInitial,
+	type MySqlCustomColumnBuilder,
+	type MySqlDateTimeBuilderInitial,
+	type MySqlIntBuilderInitial,
+	type MySqlJsonBuilderInitial,
 	type MySqlTableWithColumns,
+	type MySqlTextBuilderInitial,
 	boolean as mysqlBoolean,
 	customType as mysqlCustomType,
 	datetime as mysqlDatetime,
@@ -24,9 +30,15 @@ import {
 	text as mysqlText,
 } from "drizzle-orm/mysql-core";
 import {
+	type PgBooleanBuilderInitial,
+	type PgCustomColumnBuilder,
 	type PgEnum,
+	type PgIntegerBuilderInitial,
+	type PgJsonbBuilderInitial,
 	type PgSequence,
 	type PgTableWithColumns,
+	type PgTextBuilderInitial,
+	type PgTimestampBuilderInitial,
 	boolean as pgBoolean,
 	customType as pgCustomType,
 	integer as pgInteger,
@@ -36,7 +48,13 @@ import {
 	timestamp as pgTimestamp,
 } from "drizzle-orm/pg-core";
 import {
+	type SQLiteBlobJsonBuilderInitial,
+	type SQLiteBooleanBuilderInitial,
+	type SQLiteIntegerBuilderInitial,
 	type SQLiteTableWithColumns,
+	type SQLiteTextBuilderInitial,
+	type SQLiteTextJsonBuilderInitial,
+	type SQLiteTimestampBuilderInitial,
 	blob as sqliteBlob,
 	integer as sqliteInteger,
 	sqliteTable,
@@ -94,38 +112,79 @@ const TABLE_CONSTRUCTORS: Record<DrizzleDialect, TableConstructor> = {
 /**
  * Maps a dialect and a scalar column type to a dialect-specific column builder.
  *
- * Declared with `satisfies` (not an explicit annotation) so each factory's
- * precise return type is preserved for `ColumnBuilderFor` to recover.
+ * Each factory carries an explicit return type: it keeps the map portable under
+ * `--isolatedDeclarations` while still exposing each builder's precise type for
+ * `ColumnBuilderFor` to recover.
  */
 const TYPE_MAP = {
 	pg: {
-		string: (n: string) => pgText(n),
-		integer: (n: string) => pgInteger(n),
-		boolean: (n: string) => pgBoolean(n),
-		timestamp: (n: string) => pgTimestamp(n),
-		json: (n: string) => pgJsonb(n),
-		blob: (n: string) => pgBytea(n),
+		string: (n: string): PgTextBuilderInitial<string, [string, ...string[]]> =>
+			pgText(n),
+		integer: (n: string): PgIntegerBuilderInitial<string> => pgInteger(n),
+		boolean: (n: string): PgBooleanBuilderInitial<string> => pgBoolean(n),
+		timestamp: (n: string): PgTimestampBuilderInitial<string> => pgTimestamp(n),
+		json: (n: string): PgJsonbBuilderInitial<string> => pgJsonb(n),
+		blob: (
+			n: string,
+		): PgCustomColumnBuilder<{
+			name: string;
+			dataType: "custom";
+			columnType: "PgCustomColumn";
+			data: Buffer;
+			driverParam: unknown;
+			enumValues: undefined;
+		}> => pgBytea(n),
 	},
 	mysql: {
-		string: (n: string) => mysqlText(n),
-		integer: (n: string) => mysqlInt(n),
-		boolean: (n: string) => mysqlBoolean(n),
-		timestamp: (n: string) => mysqlDatetime(n),
-		json: (n: string) => mysqlJson(n),
-		blob: (n: string) => mysqlBlob(n),
+		string: (
+			n: string,
+		): MySqlTextBuilderInitial<string, [string, ...string[]]> => mysqlText(n),
+		integer: (n: string): MySqlIntBuilderInitial<string> => mysqlInt(n),
+		boolean: (n: string): MySqlBooleanBuilderInitial<string> => mysqlBoolean(n),
+		timestamp: (n: string): MySqlDateTimeBuilderInitial<string> =>
+			mysqlDatetime(n),
+		json: (n: string): MySqlJsonBuilderInitial<string> => mysqlJson(n),
+		blob: (
+			n: string,
+		): MySqlCustomColumnBuilder<{
+			name: string;
+			dataType: "custom";
+			columnType: "MySqlCustomColumn";
+			data: Buffer;
+			driverParam: unknown;
+			enumValues: undefined;
+		}> => mysqlBlob(n),
 	},
 	sqlite: {
-		string: (n: string) => sqliteText(n),
-		integer: (n: string) => sqliteInteger(n),
-		boolean: (n: string) => sqliteInteger(n, { mode: "boolean" }),
-		timestamp: (n: string) => sqliteInteger(n, { mode: "timestamp" }),
-		json: (n: string) => sqliteText(n, { mode: "json" }),
-		blob: (n: string) => sqliteBlob(n),
+		string: (
+			n: string,
+		): SQLiteTextBuilderInitial<
+			string,
+			[string, ...string[]],
+			number | undefined
+		> => sqliteText(n),
+		integer: (n: string): SQLiteIntegerBuilderInitial<string> =>
+			sqliteInteger(n),
+		boolean: (n: string): SQLiteBooleanBuilderInitial<string> =>
+			sqliteInteger(n, { mode: "boolean" }),
+		timestamp: (n: string): SQLiteTimestampBuilderInitial<string> =>
+			sqliteInteger(n, { mode: "timestamp" }),
+		json: (n: string): SQLiteTextJsonBuilderInitial<string> =>
+			sqliteText(n, { mode: "json" }),
+		blob: (n: string): SQLiteBlobJsonBuilderInitial<string> => sqliteBlob(n),
 	},
-} satisfies Record<
+};
+
+// Enforces full dialect × scalar-type coverage without a `satisfies` clause,
+// which `--isolatedDeclarations` can't emit through. The precise per-factory
+// return types above are what `ColumnBuilderFor` recovers.
+type _AssertTypeMapCoverage = typeof TYPE_MAP extends Record<
 	DrizzleDialect,
 	Record<ScalarColumnType, (name: string) => ColumnBuilderBase>
->;
+>
+	? true
+	: never;
+const _assertTypeMapCoverage: _AssertTypeMapCoverage = true;
 
 /** Builds an `enum` column as a text column constrained to its values. */
 const ENUM_BUILDERS: Record<
