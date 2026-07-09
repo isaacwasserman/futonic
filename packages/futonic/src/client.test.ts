@@ -1,32 +1,38 @@
 import { expect, test } from "bun:test";
 import { type } from "arktype";
 import { createClient } from "better-call/client";
-import { createFutonicServiceConstructor } from "./service";
+import { createFutonicServiceConstructor, defineService } from "./service";
 import { createSqliteConnection } from "./test-helpers";
 
 function buildService() {
-	const make = createFutonicServiceConstructor({
-		id: "ticketing",
-		dbSchema: {
-			tables: {
-				tickets: {
-					name: "tickets",
-					columns: { id: { type: "string", primaryKey: true } },
+	const make = createFutonicServiceConstructor(
+		defineService({
+			id: "ticketing",
+			dbSchema: {
+				tables: {
+					tickets: {
+						name: "tickets",
+						columns: { id: { type: "string", primaryKey: true } },
+					},
 				},
 			},
-		},
-		configSchema: type({ token: "string" }),
-		endpoints: (defineEndpoint) => ({
-			createTicket: defineEndpoint(
-				"/tickets",
-				{ method: "POST", body: type({ title: "string" }) },
-				async (ctx) => ({ id: ctx.body.title }),
-			),
-			listTickets: defineEndpoint("/tickets", { method: "GET" }, async () => ({
-				items: ["a", "b"],
-			})),
+			configSchema: type({ token: "string" }),
+			endpoints: (defineEndpoint) => ({
+				createTicket: defineEndpoint(
+					"/tickets",
+					{ method: "POST", body: type({ title: "string" }) },
+					async (ctx) => ({ id: ctx.body.title }),
+				),
+				listTickets: defineEndpoint(
+					"/tickets",
+					{ method: "GET" },
+					async () => ({
+						items: ["a", "b"],
+					}),
+				),
+			}),
 		}),
-	});
+	);
 
 	return make({
 		config: { token: "x" },

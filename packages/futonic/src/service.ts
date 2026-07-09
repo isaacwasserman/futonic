@@ -146,6 +146,28 @@ export type ServiceDefinition<
 	) => TServiceMethods;
 };
 
+/**
+ * The db-erased view of a {@link ServiceDefinition} that `defineService`
+ * returns. The Kysely-typed builder parameters are replaced with `never`, so a
+ * downstream service that exports its definition never drags the full
+ * `Kysely<Schema>` type into its published declarations (which would force
+ * consumers to inline it). Authoring keeps full typing via the
+ * `ServiceDefinition` input passed to `defineService`.
+ */
+export type ServiceBlueprint<
+	TDBSchema extends ServiceDBSchema,
+	TConfig extends ServiceConfig,
+	TEndpoints extends Record<string, Endpoint>,
+	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
+	TServiceId extends string,
+> = {
+	id: TServiceId;
+	dbSchema: TDBSchema;
+	configSchema: StandardSchemaV1<TConfig>;
+	endpoints: (defineEndpoint: never) => TEndpoints;
+	serviceMethods?: (define: never) => TServiceMethods;
+};
+
 /** Validates the static definition once, up front. */
 function validateDefinition(id: string, dbSchema: ServiceDBSchema): void {
 	if (!/^[a-z]+$/.test(id)) {
@@ -219,7 +241,7 @@ export function defineService<
 		TServiceMethods,
 		TServiceId
 	>,
-): ServiceDefinition<
+): ServiceBlueprint<
 	TDBSchema,
 	TConfig,
 	TEndpoints,
@@ -239,7 +261,7 @@ export function createFutonicServiceConstructor<
 	>,
 	TServiceId extends string = string,
 >(
-	definition: ServiceDefinition<
+	definition: ServiceBlueprint<
 		TDBSchema,
 		TConfig,
 		TEndpoints,
@@ -249,6 +271,18 @@ export function createFutonicServiceConstructor<
 ): FutonicServiceConstructor<TConfig, TEndpoints, TServiceMethods> {
 	validateDefinition(definition.id, definition.dbSchema);
 
+	// The blueprint erases the builder param types (`never`) for the published
+	// surface; here we recover the authoring view to invoke the callbacks. This
+	// is the one authoring↔runtime boundary — a single downcast, sound because
+	// `ServiceDefinition` is assignable to `ServiceBlueprint`.
+	const authored = definition as ServiceDefinition<
+		TDBSchema,
+		TConfig,
+		TEndpoints,
+		TServiceMethods,
+		TServiceId
+	>;
+
 	return (options: {
 		config: TConfig;
 		database: { connection: DatabaseConnection; provider: DatabaseProvider };
@@ -256,7 +290,7 @@ export function createFutonicServiceConstructor<
 	}) => {
 		const { connection, provider } = options.database;
 
-		const configResult = definition.configSchema["~standard"].validate(
+		const configResult = authored.configSchema["~standard"].validate(
 			options.config,
 		);
 		if (configResult instanceof Promise) {
@@ -283,7 +317,7 @@ export function createFutonicServiceConstructor<
 		const defineEndpoint = createEndpoint.create({
 			use: [createServiceMiddleware(serviceCtx)],
 		}) as DefineEndpoint<TConfig, KyselyFromServiceDBSchema<TDBSchema>>;
-		const endpoints = definition.endpoints(defineEndpoint);
+		const endpoints = authored.endpoints(defineEndpoint);
 		const router = createRouter(endpoints, { openapi: { disabled: true } });
 
 		const define = ((impl: AnyServiceMethodImpl) =>
@@ -291,7 +325,7 @@ export function createFutonicServiceConstructor<
 			TConfig,
 			KyselyFromServiceDBSchema<TDBSchema>
 		>;
-		const methodImpls = (definition.serviceMethods?.(define) ?? {}) as Record<
+		const methodImpls = (authored.serviceMethods?.(define) ?? {}) as Record<
 			string,
 			AnyServiceMethodImpl
 		>;

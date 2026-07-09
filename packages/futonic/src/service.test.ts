@@ -3,6 +3,7 @@ import { type } from "arktype";
 import {
 	type Logger,
 	createFutonicServiceConstructor,
+	defineService,
 	generateServiceDrizzleSchema,
 } from "./service";
 import { createSqliteConnection } from "./test-helpers";
@@ -18,58 +19,66 @@ const dbSchema = {
 
 test("rejects a service id that is not all-lowercase", () => {
 	expect(() =>
-		createFutonicServiceConstructor({
-			id: "Ticketing",
-			dbSchema,
-			configSchema: type({ token: "string" }),
-			endpoints: () => ({}),
-		}),
+		createFutonicServiceConstructor(
+			defineService({
+				id: "Ticketing",
+				dbSchema,
+				configSchema: type({ token: "string" }),
+				endpoints: () => ({}),
+			}),
+		),
 	).toThrow(/lowercase letters/);
 });
 
 test("rejects a non-camelCase schema key", () => {
 	expect(() =>
-		createFutonicServiceConstructor({
-			id: "svc",
-			dbSchema: {
-				tables: {
-					Tickets: {
-						name: "tickets",
-						columns: { id: { type: "string", primaryKey: true } },
+		createFutonicServiceConstructor(
+			defineService({
+				id: "svc",
+				dbSchema: {
+					tables: {
+						Tickets: {
+							name: "tickets",
+							columns: { id: { type: "string", primaryKey: true } },
+						},
 					},
 				},
-			},
-			configSchema: type({ token: "string" }),
-			endpoints: () => ({}),
-		}),
+				configSchema: type({ token: "string" }),
+				endpoints: () => ({}),
+			}),
+		),
 	).toThrow(/camelCase/);
 });
 
 test("rejects a non-snake_case table name", () => {
 	expect(() =>
-		createFutonicServiceConstructor({
-			id: "svc",
-			dbSchema: {
-				tables: {
-					tickets: {
-						name: "Tickets",
-						columns: { id: { type: "string", primaryKey: true } },
+		createFutonicServiceConstructor(
+			defineService({
+				id: "svc",
+				dbSchema: {
+					tables: {
+						tickets: {
+							name: "Tickets",
+							columns: { id: { type: "string", primaryKey: true } },
+						},
 					},
 				},
-			},
-			configSchema: type({ token: "string" }),
-			endpoints: () => ({}),
-		}),
+				configSchema: type({ token: "string" }),
+				endpoints: () => ({}),
+			}),
+		),
 	).toThrow(/snake_case/);
 });
 
 test("throws when the provided config fails the config schema", () => {
-	const make = createFutonicServiceConstructor({
-		id: "svc",
-		dbSchema,
-		configSchema: type({ token: "string" }),
-		endpoints: () => ({}),
-	});
+	const make = createFutonicServiceConstructor(
+		defineService({
+			id: "svc",
+			dbSchema,
+			configSchema: type({ token: "string" }),
+			endpoints: () => ({}),
+		}),
+	);
 
 	expect(() =>
 		make({
@@ -80,26 +89,28 @@ test("throws when the provided config fails the config schema", () => {
 });
 
 function buildService(logger?: Logger) {
-	const make = createFutonicServiceConstructor({
-		id: "ticketing",
-		dbSchema,
-		configSchema: type({ token: "string" }),
-		endpoints: (defineEndpoint) => ({
-			createTicket: defineEndpoint(
-				"/tickets",
-				{ method: "POST", body: type({ title: "string" }) },
-				async (ctx) => {
-					ctx.context.serviceCtx.logger.info("made", ctx.body.title);
-					return { id: ctx.body.title };
-				},
-			),
+	const make = createFutonicServiceConstructor(
+		defineService({
+			id: "ticketing",
+			dbSchema,
+			configSchema: type({ token: "string" }),
+			endpoints: (defineEndpoint) => ({
+				createTicket: defineEndpoint(
+					"/tickets",
+					{ method: "POST", body: type({ title: "string" }) },
+					async (ctx) => {
+						ctx.context.serviceCtx.logger.info("made", ctx.body.title);
+						return { id: ctx.body.title };
+					},
+				),
+			}),
+			serviceMethods: (define) => ({
+				whoami: define(async (_input: Record<string, never>, { config }) => ({
+					token: config.token,
+				})),
+			}),
 		}),
-		serviceMethods: (define) => ({
-			whoami: define(async (_input: Record<string, never>, { config }) => ({
-				token: config.token,
-			})),
-		}),
-	});
+	);
 
 	return make({
 		config: { token: "secret" },
