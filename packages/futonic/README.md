@@ -81,54 +81,17 @@ export const createTicketingService = createFutonicServiceConstructor({
 });
 ```
 
-## 2. Generate the client
+## 2. Export the package
 
-Run codegen to turn the live endpoints into a static, serializable route manifest (plain data plus a type-only import). Add this build script and re-run it whenever endpoints change:
-
-```ts
-// @acme/ticketing/scripts/gen-client.ts
-import { writeFileSync } from "node:fs";
-import { generateNamedClientModule } from "futonic";
-import { createTicketingService } from "../src/service";
-
-const source = generateNamedClientModule(createTicketingService.definition, {
-  exportName: "ticketingRoutes",
-  // A type expression for the endpoints record; a type-only `import(...)`
-  // keeps server code out of the bundle.
-  endpointsType:
-    'ReturnType<typeof import("../src/service").createTicketingService>["endpoints"]',
-});
-writeFileSync("src/client.generated.ts", source);
-```
-
-It emits (and you commit) the manifest module:
+Export the constructor. Consumers type their client from the service's `router`, so also export a type alias for it:
 
 ```ts
-// @acme/ticketing/src/client.generated.ts
-import type { NamedClientRoutes } from "futonic/client";
-
-export const ticketingRoutes: NamedClientRoutes<
-  ReturnType<typeof import("../src/service").createTicketingService>["endpoints"]
-> = {
-  createTicket: { method: "POST", path: "/tickets" },
-  listTickets: { method: "GET", path: "/tickets" },
-};
+// @acme/ticketing/src/index.ts
+export { createTicketingService } from "./service";
+export type TicketingRouter = ReturnType<
+  typeof import("./service").createTicketingService
+>["router"];
 ```
-
-## 3. Export the package
-
-Publish the constructor and a client factory. The factory imports only the manifest and `futonic/client`, so it pulls in **no server code** and is safe in a browser:
-
-```ts
-// @acme/ticketing/src/client.ts  →  exported as "@acme/ticketing/client"
-import { createClientFromManifest, type ClientOptions } from "futonic/client";
-import { ticketingRoutes } from "./client.generated";
-
-export const createTicketingClient = (options?: ClientOptions) =>
-  createClientFromManifest(ticketingRoutes, options);
-```
-
-Your package now exposes `createTicketingService` (server) and `createTicketingClient` (client).
 
 ---
 
@@ -174,14 +137,15 @@ export const { tickets } = ticketing.drizzleSchema;
 
 ## 3. Call it from a client
 
-Use the factory the service package exports — from your backend, another service, or the browser. Calls are typed end to end with no manual type argument:
+`futonic/client` re-exports better-call's typesafe `createClient`. Type it from the service router (a type-only import, so no server code is bundled) and call endpoints by method + path — `GET` is the bare path, others are prefixed `@method`:
 
 ```ts
-import { createTicketingClient } from "@acme/ticketing/client";
+import { createClient } from "futonic/client";
+import type { TicketingRouter } from "@acme/ticketing"; // type-only
 
-const client = createTicketingClient({ baseURL: "/api/ticketing" });
-const res = await client.createTicket({ body: { title: "x", summary: "y" } });
-res.data; // { id: string } — inferred from the manifest brand
+const client = createClient<TicketingRouter>({ baseURL: "/api/ticketing" });
+const res = await client("@post/tickets", { body: { title: "x", summary: "y" } });
+res.data; // { id: string } — inferred from the router
 ```
 
 ---
@@ -190,6 +154,6 @@ res.data; // { id: string } — inferred from the manifest brand
 
 | Import | Exports you'll use | Browser-safe |
 | --- | --- | --- |
-| `futonic` | `createFutonicServiceConstructor`, `generateNamedClientModule` | No |
-| `futonic/client` | `createClientFromManifest`, `NamedClientRoutes`, `ClientOptions` | Yes |
+| `futonic` | `createFutonicServiceConstructor` and db-schema types | No |
+| `futonic/client` | `createClient`, `ClientOptions` | Yes |
 | `futonic/drizzle` | `generateDrizzleSchema` and Drizzle types | No |
