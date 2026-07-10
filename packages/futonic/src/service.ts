@@ -5,6 +5,7 @@ import {
 	type Endpoint,
 	type Middleware,
 	type Router,
+	type RouterConfig,
 	createEndpoint,
 	createMiddleware,
 	createRouter,
@@ -191,9 +192,14 @@ function validateDefinition(id: string, dbSchema: ServiceDBSchema): void {
 	}
 }
 
+/** The better-call router's OpenAPI route configuration. */
+export type OpenapiOptions = NonNullable<RouterConfig["openapi"]>;
+
 export type HandlerOptions = {
 	/** Mount path to strip before routing (e.g. `/api/servicedesk`, or `/` at root). */
 	basePath: string;
+	/** Configure the better-call router's OpenAPI route. Disabled by default. */
+	openapi?: OpenapiOptions;
 };
 
 export type FutonicService<
@@ -349,8 +355,16 @@ export function createFutonicServiceConstructor<
 		) as ResolveServiceMethods<TServiceMethods>;
 
 		return {
-			handler: (request: Request, options: HandlerOptions): Promise<Response> =>
-				router.handler(stripBasePath(request, options.basePath)),
+			handler: (
+				request: Request,
+				options: HandlerOptions,
+			): Promise<Response> => {
+				const stripped = stripBasePath(request, options.basePath);
+				if (!options.openapi) return router.handler(stripped);
+				return createRouter(endpoints, {
+					openapi: options.openapi,
+				}).handler(stripped);
+			},
 			endpoints,
 			router,
 			serviceMethods,

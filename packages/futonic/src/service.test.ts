@@ -189,6 +189,22 @@ test("basePath is stripped from the request URL before routing", async () => {
 	expect(await mounted.json()).toEqual({ id: "yo" });
 });
 
+test("openapi handler option exposes the reference route", async () => {
+	const svc = buildService();
+
+	const disabled = await svc.handler(
+		new Request("http://x/api/reference", { method: "GET" }),
+		{ basePath: "/" },
+	);
+	expect(disabled.status).toBe(404);
+
+	const enabled = await svc.handler(
+		new Request("http://x/api/reference", { method: "GET" }),
+		{ basePath: "/", openapi: { disabled: false } },
+	);
+	expect(enabled.status).toBe(200);
+});
+
 test("generates the prefixed drizzle schema from the definition and dialect", () => {
 	const schema = generateServiceDrizzleSchema(
 		{ id: "ticketing", dbSchema },

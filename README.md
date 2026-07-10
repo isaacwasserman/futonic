@@ -149,6 +149,13 @@ const handler = (req: Request) => svc.handler(req, { basePath: "/api/billing" })
 export { handler as GET, handler as POST, handler as PUT, handler as DELETE, handler as PATCH };
 ```
 
+Pass `openapi` alongside `basePath` to expose the router's OpenAPI reference (disabled by default); it accepts better-call's router OpenAPI config:
+
+```typescript
+app.all("/api/billing/*", (c) =>
+  svc.handler(c.req.raw, { basePath: "/api/billing", openapi: { disabled: false } }));
+```
+
 That's it. The billing service handles requests at `/api/billing/*`, stores data in the host's database under prefixed tables, and the host never had to know futonic was involved — it just installed `@acme/billing` and ran it. On teardown, `await svc.shutdown()`.
 
 ## More features
