@@ -142,13 +142,12 @@ test("service methods are bound to the config context", async () => {
 test("the http handler dispatches requests to endpoints", async () => {
 	const svc = buildService();
 
-	const res = await svc.handler(
+	const res = await svc.createHandler({ basePath: "/" }).handle(
 		new Request("http://x/tickets", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ title: "yo" }),
 		}),
-		{ basePath: "/" },
 	);
 
 	expect(res.ok).toBe(true);
@@ -157,52 +156,47 @@ test("the http handler dispatches requests to endpoints", async () => {
 
 test("the http handler 404s unknown routes", async () => {
 	const svc = buildService();
-	const res = await svc.handler(
-		new Request("http://x/nope", { method: "GET" }),
-		{ basePath: "/" },
-	);
+	const res = await svc
+		.createHandler({ basePath: "/" })
+		.handle(new Request("http://x/nope", { method: "GET" }));
 	expect(res.status).toBe(404);
 });
 
 test("basePath is stripped from the request URL before routing", async () => {
 	const svc = buildService();
 
-	const unmounted = await svc.handler(
+	const unmounted = await svc.createHandler({ basePath: "/" }).handle(
 		new Request("http://x/api/tickets", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ title: "yo" }),
 		}),
-		{ basePath: "/" },
 	);
 	expect(unmounted.status).toBe(404);
 
-	const mounted = await svc.handler(
+	const mounted = await svc.createHandler({ basePath: "/api" }).handle(
 		new Request("http://x/api/tickets", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ title: "yo" }),
 		}),
-		{ basePath: "/api" },
 	);
 	expect(mounted.ok).toBe(true);
 	expect(await mounted.json()).toEqual({ id: "yo" });
 });
 
-test("openapi handler option exposes the reference route", async () => {
+test("openapi is enabled at /reference by default and can be disabled", async () => {
 	const svc = buildService();
 
-	const disabled = await svc.handler(
-		new Request("http://x/api/reference", { method: "GET" }),
-		{ basePath: "/" },
-	);
-	expect(disabled.status).toBe(404);
-
-	const enabled = await svc.handler(
-		new Request("http://x/api/reference", { method: "GET" }),
-		{ basePath: "/", openapi: { disabled: false } },
-	);
+	const enabled = await svc
+		.createHandler({ basePath: "/" })
+		.handle(new Request("http://x/reference", { method: "GET" }));
 	expect(enabled.status).toBe(200);
+
+	const disabled = await svc
+		.createHandler({ basePath: "/", openApi: false })
+		.handle(new Request("http://x/reference", { method: "GET" }));
+	expect(disabled.status).toBe(404);
 });
 
 test("generates the prefixed drizzle schema from the definition and dialect", () => {

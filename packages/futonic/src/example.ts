@@ -84,8 +84,8 @@ const ticketingService = createTicketingService({
 // Drizzle tables for migrations, keyed and SQL-named by the service id.
 const drizzleSchema = ticketingDrizzleSchema("sqlite", sqliteCore);
 
-// HTTP entry point: (request: Request) => Promise<Response>
-const handler = ticketingService.handler;
+// HTTP entry point: createHandler({ basePath }).handle(request) => Promise<Response>
+const handler = ticketingService.createHandler({ basePath: "/api/ticketing" });
 
 // Typesafe client — typed from the service's router, called by method + path.
 const client = createClient<typeof ticketingService.router>({

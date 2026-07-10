@@ -138,22 +138,23 @@ const svc = billing({
 await svc.init();
 ```
 
-Then a single catch-all route in their framework of choice. `svc.handler` is a web-standard `(Request, { basePath }) => Response` handler — pass the mount path so it can strip the prefix before routing to root-defined endpoints:
+Then a single catch-all route in their framework of choice. `svc.createHandler({ basePath })` returns a handler whose `handle(request)` is a web-standard `(Request) => Response` — pass the mount path so it can strip the prefix before routing to root-defined endpoints:
 
 ```typescript
 // Hono
-app.all("/api/billing/*", (c) => svc.handler(c.req.raw, { basePath: "/api/billing" }));
+const handler = svc.createHandler({ basePath: "/api/billing" });
+app.all("/api/billing/*", (c) => handler.handle(c.req.raw));
 
 // Next.js — app/api/billing/[...path]/route.ts
-const handler = (req: Request) => svc.handler(req, { basePath: "/api/billing" });
-export { handler as GET, handler as POST, handler as PUT, handler as DELETE, handler as PATCH };
+const handler = svc.createHandler({ basePath: "/api/billing" });
+const route = (req: Request) => handler.handle(req);
+export { route as GET, route as POST, route as PUT, route as DELETE, route as PATCH };
 ```
 
-Pass `openapi` alongside `basePath` to expose the router's OpenAPI reference (disabled by default); it accepts better-call's router OpenAPI config:
+An OpenAPI reference is served at `/reference` by default. Pass `openApi` to override better-call's router OpenAPI config, or `openApi: false` to disable it:
 
 ```typescript
-app.all("/api/billing/*", (c) =>
-  svc.handler(c.req.raw, { basePath: "/api/billing", openapi: { disabled: false } }));
+const handler = svc.createHandler({ basePath: "/api/billing", openApi: false });
 ```
 
 That's it. The billing service handles requests at `/api/billing/*`, stores data in the host's database under prefixed tables, and the host never had to know futonic was involved — it just installed `@acme/billing` and ran it. On teardown, `await svc.shutdown()`.
@@ -341,16 +342,16 @@ const ticketing = createTicketingService({
   // logger?: defaults to `console`, prefixed with the service id.
 });
 
-// HTTP entry point: (request: Request, { basePath }) => Promise<Response>
+// HTTP entry point: createHandler({ basePath }).handle(request) => Promise<Response>
 // `basePath` is the mount path, stripped before routing (`/` when mounted at root).
-export const handler = (req: Request) =>
-  ticketing.handler(req, { basePath: "/api/ticketing" });
+const handler = ticketing.createHandler({ basePath: "/api/ticketing" });
+export const route = (req: Request) => handler.handle(req);
 
 // Non-HTTP methods — context-free and strongly typed.
 await ticketing.serviceMethods.closeStaleTickets({ olderThanDays: 30 });
 ```
 
-A constructed service exposes: `handler`, `endpoints`, `router`, and `serviceMethods`.
+A constructed service exposes: `createHandler`, `endpoints`, `router`, and `serviceMethods`.
 
 #### 2. Migrate
 
