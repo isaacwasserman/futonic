@@ -43,12 +43,12 @@ function buildService() {
 // Route the client's fetch straight into the service handler so the whole
 // client → path → handler round trip is exercised without a real network.
 function clientFor(svc: ReturnType<typeof buildService>) {
+	const handler = svc.createHandler({ basePath: "/" });
 	return createClient<typeof svc.router>({
 		baseURL: "http://localhost",
 		customFetchImpl: (input, init) =>
-			svc.handler(
+			handler.handle(
 				new Request(input as string | URL, init as RequestInit | undefined),
-				{ basePath: "/" },
 			),
 	});
 }

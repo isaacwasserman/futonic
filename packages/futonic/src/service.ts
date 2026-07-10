@@ -195,11 +195,24 @@ function validateDefinition(id: string, dbSchema: ServiceDBSchema): void {
 /** The better-call router's OpenAPI route configuration. */
 export type OpenapiOptions = NonNullable<RouterConfig["openapi"]>;
 
+const DEFAULT_OPENAPI_OPTIONS: OpenapiOptions = {
+	disabled: false,
+	path: "/reference",
+};
+
 export type HandlerOptions = {
 	/** Mount path to strip before routing (e.g. `/api/servicedesk`, or `/` at root). */
 	basePath: string;
-	/** Configure the better-call router's OpenAPI route. Disabled by default. */
-	openapi?: OpenapiOptions;
+	/**
+	 * Configure the better-call router's OpenAPI route. Enabled at `/reference`
+	 * by default; pass `false` to disable it, or override individual fields.
+	 */
+	openApi?: OpenapiOptions | false;
+};
+
+export type FutonicHandler = {
+	/** HTTP entry point for a configured handler. */
+	handle: (request: Request) => Promise<Response>;
 };
 
 export type FutonicService<
@@ -209,8 +222,8 @@ export type FutonicService<
 		never
 	>,
 > = {
-	/** HTTP entry point. */
-	handler: (request: Request, options: HandlerOptions) => Promise<Response>;
+	/** Builds a configured HTTP handler. */
+	createHandler: (options: HandlerOptions) => FutonicHandler;
 	/**
 	 * The better-call endpoints — directly callable in-process, and the source
 	 * for the typesafe client: `createClient<typeof service.endpoints>()`.
@@ -355,15 +368,18 @@ export function createFutonicServiceConstructor<
 		) as ResolveServiceMethods<TServiceMethods>;
 
 		return {
-			handler: (
-				request: Request,
-				options: HandlerOptions,
-			): Promise<Response> => {
-				const stripped = stripBasePath(request, options.basePath);
-				if (!options.openapi) return router.handler(stripped);
-				return createRouter(endpoints, {
-					openapi: options.openapi,
-				}).handler(stripped);
+			createHandler: (handlerOptions: HandlerOptions): FutonicHandler => {
+				const openapi =
+					handlerOptions.openApi === false
+						? { disabled: true }
+						: { ...DEFAULT_OPENAPI_OPTIONS, ...handlerOptions.openApi };
+				const configuredRouter = createRouter({ ...endpoints }, { openapi });
+				return {
+					handle: (request: Request): Promise<Response> =>
+						configuredRouter.handler(
+							stripBasePath(request, handlerOptions.basePath),
+						),
+				};
 			},
 			endpoints,
 			router,
