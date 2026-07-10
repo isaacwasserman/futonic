@@ -48,6 +48,7 @@ function clientFor(svc: ReturnType<typeof buildService>) {
 		customFetchImpl: (input, init) =>
 			svc.handler(
 				new Request(input as string | URL, init as RequestInit | undefined),
+				{ basePath: "/" },
 			),
 	});
 }

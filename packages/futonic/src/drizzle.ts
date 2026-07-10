@@ -1,18 +1,7 @@
 /**
- * Drizzle schema generator.
- *
- * Converts a service's dialect-agnostic `ServiceDBSchema` into a record of
- * Drizzle table objects for a specific SQL dialect. Hosts feed those tables
- * into their own Drizzle schema so `drizzle-kit` can produce migrations.
- *
- * The host injects its *own* drizzle dialect module (e.g.
- * `import * as pg from "drizzle-orm/pg-core"`). Both the runtime table objects
- * and their types therefore come from the host's drizzle-orm — futonic never
- * imports drizzle-orm here, so there is no version coupling: the generated
- * tables are always the host's drizzle version and are nameable via the host's
- * own package. (Precise per-column types can't be reconstructed generically
- * across drizzle-orm versions, so tables come back as the host's base table
- * type — sufficient for migrations, which read the runtime objects.)
+ * Drizzle schema generator. Builds a service's `ServiceDBSchema` into Drizzle
+ * tables using the host's injected dialect module, so the tables use the host's
+ * own drizzle-orm (no version coupling) and `drizzle-kit` can migrate them.
  */
 
 import type {
@@ -24,11 +13,7 @@ import type {
 /** Dialect identifier, aligned with the codebase's database provider. */
 export type DrizzleDialect = "pg" | "mysql" | "sqlite";
 
-/**
- * The host-provided drizzle dialect module. Typed as a loose record of builder
- * functions so *any* drizzle-orm version's namespace satisfies it; the concrete
- * type is captured per call so the return stays expressed in the host's types.
- */
+/** The host-provided drizzle dialect module (e.g. `drizzle-orm/pg-core`). */
 export type DrizzleBuilders = Record<string, unknown>;
 
 /** The base table *class* a dialect module exports (`PgTable`, etc.). */
@@ -43,17 +28,11 @@ type BaseTableClassName<D extends DrizzleDialect> = D extends "pg"
 type AnyAbstractCtor<T> = abstract new (...args: any[]) => T;
 
 /**
- * The host's base table type, recovered from the injected dialect module's
- * exported table class. We extract the base class instance rather than the
- * `pgTable(...)` return: drizzle's table constructor is a generic hybrid
- * callable whose precise return can't be recovered via `infer` across versions.
- * The base table type is nameable through the host's own drizzle-orm and is all
- * a host needs (drizzle-kit reads the runtime objects for migrations).
- *
- * Written as a mapped-type-in-`extends` so inference defers to the
- * *instantiated* namespace (matching the type-param's `Record<string, unknown>`
- * constraint would collapse the access to `unknown` and yield `never`).
+ * The host's base table type (`PgTable`, etc.), recovered from the injected
+ * module's table class so it's nameable via the host's own drizzle-orm.
  */
+// Mapped-type-in-`extends` is load-bearing: a plain constraint collapses the
+// property access to `unknown` and yields `never`.
 type HostTable<
 	D extends DrizzleDialect,
 	TDrizzle extends DrizzleBuilders,
@@ -63,12 +42,7 @@ type HostTable<
 	? T
 	: never;
 
-/**
- * The record `generateDrizzleSchema` returns. Each key is the service prefix
- * followed by the capitalized logical table name (e.g. `ticketingTickets`), and
- * each table is the host's own table type — so consumers name it through their
- * own drizzle-orm, never futonic's.
- */
+/** Return of `generateDrizzleSchema`: `${prefix}${TableName}` keyed host tables. */
 export type InferDrizzleSchema<
 	TSchema extends ServiceDBSchema,
 	D extends DrizzleDialect,

@@ -138,14 +138,14 @@ const svc = billing({
 await svc.init();
 ```
 
-Then a single catch-all route in their framework of choice — `svc.handler` is a web-standard `(Request) => Response` handler:
+Then a single catch-all route in their framework of choice. `svc.handler` is a web-standard `(Request, { basePath }) => Response` handler — pass the mount path so it can strip the prefix before routing to root-defined endpoints:
 
 ```typescript
 // Hono
-app.all("/api/billing/*", (c) => svc.handler(c.req.raw));
+app.all("/api/billing/*", (c) => svc.handler(c.req.raw, { basePath: "/api/billing" }));
 
 // Next.js — app/api/billing/[...path]/route.ts
-const handler = (req: Request) => svc.handler(req);
+const handler = (req: Request) => svc.handler(req, { basePath: "/api/billing" });
 export { handler as GET, handler as POST, handler as PUT, handler as DELETE, handler as PATCH };
 ```
 
@@ -334,8 +334,10 @@ const ticketing = createTicketingService({
   // logger?: defaults to `console`, prefixed with the service id.
 });
 
-// HTTP entry point: (request: Request) => Promise<Response>
-export const handler = ticketing.handler;
+// HTTP entry point: (request: Request, { basePath }) => Promise<Response>
+// `basePath` is the mount path, stripped before routing (`/` when mounted at root).
+export const handler = (req: Request) =>
+  ticketing.handler(req, { basePath: "/api/ticketing" });
 
 // Non-HTTP methods — context-free and strongly typed.
 await ticketing.serviceMethods.closeStaleTickets({ olderThanDays: 30 });
