@@ -6,7 +6,7 @@ import {
 	defineService,
 	generateServiceDrizzleSchema,
 } from "./service";
-import { createSqliteConnection } from "./test-helpers";
+import { createSqliteConnection, drizzleFor } from "./test-helpers";
 
 const dbSchema = {
 	tables: {
@@ -166,6 +166,7 @@ test("generates the prefixed drizzle schema from the definition and dialect", ()
 	const schema = generateServiceDrizzleSchema(
 		{ id: "ticketing", dbSchema },
 		"sqlite",
+		drizzleFor("sqlite"),
 	);
 	expect(Object.keys(schema)).toContain("ticketingTickets");
 });

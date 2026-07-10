@@ -52,7 +52,6 @@
   "peerDependencies": {
     "better-call": ">=2.0.0",
     "better-sqlite3": ">=9.0.0",
-    "drizzle-orm": ">=0.30.0",
     "kysely": ">=0.29.0"
   },
   "peerDependenciesMeta": {
@@ -69,6 +68,9 @@
       "optional": true
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "license": "MIT"
 }

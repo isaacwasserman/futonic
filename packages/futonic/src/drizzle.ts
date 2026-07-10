@@ -4,303 +4,98 @@
  * Converts a service's dialect-agnostic `ServiceDBSchema` into a record of
  * Drizzle table objects for a specific SQL dialect. Hosts feed those tables
  * into their own Drizzle schema so `drizzle-kit` can produce migrations.
+ *
+ * The host injects its *own* drizzle dialect module (e.g.
+ * `import * as pg from "drizzle-orm/pg-core"`). Both the runtime table objects
+ * and their types therefore come from the host's drizzle-orm — futonic never
+ * imports drizzle-orm here, so there is no version coupling: the generated
+ * tables are always the host's drizzle version and are nameable via the host's
+ * own package. (Precise per-column types can't be reconstructed generically
+ * across drizzle-orm versions, so tables come back as the host's base table
+ * type — sufficient for migrations, which read the runtime objects.)
  */
 
-import type {
-	BuildColumns,
-	ColumnBuilderBase,
-	Relations,
-	Table,
-	View,
-} from "drizzle-orm";
-import {
-	type MySqlBooleanBuilderInitial,
-	type MySqlCustomColumnBuilder,
-	type MySqlDateTimeBuilderInitial,
-	type MySqlIntBuilderInitial,
-	type MySqlJsonBuilderInitial,
-	type MySqlTableWithColumns,
-	type MySqlTextBuilderInitial,
-	boolean as mysqlBoolean,
-	customType as mysqlCustomType,
-	datetime as mysqlDatetime,
-	int as mysqlInt,
-	json as mysqlJson,
-	mysqlTable,
-	text as mysqlText,
-} from "drizzle-orm/mysql-core";
-import {
-	type PgBooleanBuilderInitial,
-	type PgCustomColumnBuilder,
-	type PgEnum,
-	type PgIntegerBuilderInitial,
-	type PgJsonbBuilderInitial,
-	type PgSequence,
-	type PgTableWithColumns,
-	type PgTextBuilderInitial,
-	type PgTimestampBuilderInitial,
-	boolean as pgBoolean,
-	customType as pgCustomType,
-	integer as pgInteger,
-	jsonb as pgJsonb,
-	pgTable,
-	text as pgText,
-	timestamp as pgTimestamp,
-} from "drizzle-orm/pg-core";
-import {
-	type SQLiteBlobJsonBuilderInitial,
-	type SQLiteBooleanBuilderInitial,
-	type SQLiteIntegerBuilderInitial,
-	type SQLiteTableWithColumns,
-	type SQLiteTextBuilderInitial,
-	type SQLiteTextJsonBuilderInitial,
-	type SQLiteTimestampBuilderInitial,
-	blob as sqliteBlob,
-	integer as sqliteInteger,
-	sqliteTable,
-	text as sqliteText,
-} from "drizzle-orm/sqlite-core";
 import type {
 	ColumnDefinition,
 	ServiceDBSchema,
 	TableDefinition,
 } from "./db-schema";
 
-/**
- * A top-level member of a Drizzle schema object. Drizzle ships no union for
- * this (its own API just uses `Record<string, unknown>`), so we assemble it
- * from the exported member classes: tables, relations, views, and — Postgres
- * only — enums and sequences.
- */
-export type DrizzleSchemaMember =
-	| Table
-	| Relations
-	| View
-	| PgEnum<[string, ...string[]]>
-	| PgSequence;
-
-/** A Drizzle schema object: a string-keyed set of tables, enums, etc. */
-export type DrizzleSchema = Record<string, DrizzleSchemaMember>;
-
 /** Dialect identifier, aligned with the codebase's database provider. */
 export type DrizzleDialect = "pg" | "mysql" | "sqlite";
 
-/** A `ColumnDefinition` type other than `"enum"` (enum needs its values). */
-type ScalarColumnType = Exclude<ColumnDefinition["type"], "enum">;
-
-// Column builders don't share a common chainable type across dialects, so the
-// runtime constructs them dynamically; precise types are recovered at the type
-// level from TYPE_MAP (see the inference helpers below).
-// biome-ignore lint/suspicious/noExplicitAny: drizzle column builders are dialect-specific
-type ColumnBuilder = any;
-type TableConstructor = (
-	name: string,
-	columns: Record<string, ColumnBuilder>,
-) => Table;
-
-// Postgres has no first-class binary column builder; MySQL exposes only
-// fixed/var-length binaries. Model both as raw dialect types via customType.
-const pgBytea = pgCustomType<{ data: Buffer }>({ dataType: () => "bytea" });
-const mysqlBlob = mysqlCustomType<{ data: Buffer }>({ dataType: () => "blob" });
-
-const TABLE_CONSTRUCTORS: Record<DrizzleDialect, TableConstructor> = {
-	pg: (name, columns) => pgTable(name, columns),
-	mysql: (name, columns) => mysqlTable(name, columns),
-	sqlite: (name, columns) => sqliteTable(name, columns),
-};
-
 /**
- * Maps a dialect and a scalar column type to a dialect-specific column builder.
- *
- * Each factory carries an explicit return type: it keeps the map portable under
- * `--isolatedDeclarations` while still exposing each builder's precise type for
- * `ColumnBuilderFor` to recover.
+ * The host-provided drizzle dialect module. Typed as a loose record of builder
+ * functions so *any* drizzle-orm version's namespace satisfies it; the concrete
+ * type is captured per call so the return stays expressed in the host's types.
  */
-const TYPE_MAP = {
-	pg: {
-		string: (n: string): PgTextBuilderInitial<string, [string, ...string[]]> =>
-			pgText(n),
-		integer: (n: string): PgIntegerBuilderInitial<string> => pgInteger(n),
-		boolean: (n: string): PgBooleanBuilderInitial<string> => pgBoolean(n),
-		timestamp: (n: string): PgTimestampBuilderInitial<string> => pgTimestamp(n),
-		json: (n: string): PgJsonbBuilderInitial<string> => pgJsonb(n),
-		blob: (
-			n: string,
-		): PgCustomColumnBuilder<{
-			name: string;
-			dataType: "custom";
-			columnType: "PgCustomColumn";
-			data: Buffer;
-			driverParam: unknown;
-			enumValues: undefined;
-		}> => pgBytea(n),
-	},
-	mysql: {
-		string: (
-			n: string,
-		): MySqlTextBuilderInitial<string, [string, ...string[]]> => mysqlText(n),
-		integer: (n: string): MySqlIntBuilderInitial<string> => mysqlInt(n),
-		boolean: (n: string): MySqlBooleanBuilderInitial<string> => mysqlBoolean(n),
-		timestamp: (n: string): MySqlDateTimeBuilderInitial<string> =>
-			mysqlDatetime(n),
-		json: (n: string): MySqlJsonBuilderInitial<string> => mysqlJson(n),
-		blob: (
-			n: string,
-		): MySqlCustomColumnBuilder<{
-			name: string;
-			dataType: "custom";
-			columnType: "MySqlCustomColumn";
-			data: Buffer;
-			driverParam: unknown;
-			enumValues: undefined;
-		}> => mysqlBlob(n),
-	},
-	sqlite: {
-		string: (
-			n: string,
-		): SQLiteTextBuilderInitial<
-			string,
-			[string, ...string[]],
-			number | undefined
-		> => sqliteText(n),
-		integer: (n: string): SQLiteIntegerBuilderInitial<string> =>
-			sqliteInteger(n),
-		boolean: (n: string): SQLiteBooleanBuilderInitial<string> =>
-			sqliteInteger(n, { mode: "boolean" }),
-		timestamp: (n: string): SQLiteTimestampBuilderInitial<string> =>
-			sqliteInteger(n, { mode: "timestamp" }),
-		json: (n: string): SQLiteTextJsonBuilderInitial<string> =>
-			sqliteText(n, { mode: "json" }),
-		blob: (n: string): SQLiteBlobJsonBuilderInitial<string> => sqliteBlob(n),
-	},
-};
+export type DrizzleBuilders = Record<string, unknown>;
 
-// Enforces full dialect × scalar-type coverage without a `satisfies` clause,
-// which `--isolatedDeclarations` can't emit through. The precise per-factory
-// return types above are what `ColumnBuilderFor` recovers.
-type _AssertTypeMapCoverage = typeof TYPE_MAP extends Record<
-	DrizzleDialect,
-	Record<ScalarColumnType, (name: string) => ColumnBuilderBase>
->
-	? true
-	: never;
-const _assertTypeMapCoverage: _AssertTypeMapCoverage = true;
-
-/** Builds an `enum` column as a text column constrained to its values. */
-const ENUM_BUILDERS: Record<
-	DrizzleDialect,
-	(name: string, values: [string, ...string[]]) => ColumnBuilder
-> = {
-	pg: (n, values) => pgText(n, { enum: values }),
-	mysql: (n, values) => mysqlText(n, { enum: values }),
-	sqlite: (n, values) => sqliteText(n, { enum: values }),
-};
-
-// --- Type-level inference -------------------------------------------------
-// The runtime builds columns imperatively, which erases their types. These
-// helpers mirror the runtime exactly to recompute the precise table types, so
-// the return type supports `$inferSelect` / `$inferInsert`.
-
-/**
- * The initial column builder the runtime creates for a dialect + column type.
- * `enum` degrades to the string/text builder (its literal union isn't recovered
- * because `ColumnDefinition.enumValues` isn't captured generically).
- */
-type ColumnBuilderFor<
-	D extends DrizzleDialect,
-	TType extends ColumnDefinition["type"],
-> = TType extends ScalarColumnType
-	? ReturnType<(typeof TYPE_MAP)[D][TType]>
-	: ReturnType<(typeof TYPE_MAP)[D]["string"]>;
-
-/**
- * The select/insert-affecting modifiers a column applies, expressed as the `_`
- * config flags Drizzle reads (mirrors `NotNull`/`HasDefault`/`IsPrimaryKey`).
- * A column is NOT NULL unless it is explicitly `optional`.
- */
-type ColumnModifiers<C extends ColumnDefinition> = (C extends {
-	primaryKey: true;
-}
-	? { notNull: true; isPrimaryKey: true }
-	: // biome-ignore lint/complexity/noBannedTypes: empty intersection member is intentional
-		{}) &
-	(C extends { optional: true }
-		? // biome-ignore lint/complexity/noBannedTypes: empty intersection member is intentional
-			{}
-		: { notNull: true }) &
-	("defaultValue" extends keyof C
-		? { hasDefault: true }
-		: // biome-ignore lint/complexity/noBannedTypes: empty intersection member is intentional
-			{});
-
-/** A column's builder with its constraints applied. */
-type ColumnBuilderForColumn<
-	D extends DrizzleDialect,
-	C extends ColumnDefinition,
-> = ColumnBuilderFor<D, C["type"]> & { _: ColumnModifiers<C> };
-
-/** The Drizzle column-builder map for a single table. */
-type ColumnsMapForColumns<
-	D extends DrizzleDialect,
-	TColumns extends Record<string, ColumnDefinition>,
-> = { [K in keyof TColumns]: ColumnBuilderForColumn<D, TColumns[K]> };
-
-/** The fully-typed Drizzle table for a dialect, name, and column set. */
-type DrizzleTableFor<
-	D extends DrizzleDialect,
-	TName extends string,
-	TColumns extends Record<string, ColumnDefinition>,
-> = D extends "pg"
-	? PgTableWithColumns<{
-			name: TName;
-			schema: undefined;
-			columns: BuildColumns<TName, ColumnsMapForColumns<"pg", TColumns>, "pg">;
-			dialect: "pg";
-		}>
+/** The base table *class* a dialect module exports (`PgTable`, etc.). */
+type BaseTableClassName<D extends DrizzleDialect> = D extends "pg"
+	? "PgTable"
 	: D extends "mysql"
-		? MySqlTableWithColumns<{
-				name: TName;
-				schema: undefined;
-				columns: BuildColumns<
-					TName,
-					ColumnsMapForColumns<"mysql", TColumns>,
-					"mysql"
-				>;
-				dialect: "mysql";
-			}>
-		: D extends "sqlite"
-			? SQLiteTableWithColumns<{
-					name: TName;
-					schema: undefined;
-					columns: BuildColumns<
-						TName,
-						ColumnsMapForColumns<"sqlite", TColumns>,
-						"sqlite"
-					>;
-					dialect: "sqlite";
-				}>
-			: never;
+		? "MySqlTable"
+		: "SQLiteTable";
+
+/** Any (abstract) class constructor, used to recover a class's instance type. */
+// biome-ignore lint/suspicious/noExplicitAny: match any constructor's arguments
+type AnyAbstractCtor<T> = abstract new (...args: any[]) => T;
+
+/**
+ * The host's base table type, recovered from the injected dialect module's
+ * exported table class. We extract the base class instance rather than the
+ * `pgTable(...)` return: drizzle's table constructor is a generic hybrid
+ * callable whose precise return can't be recovered via `infer` across versions.
+ * The base table type is nameable through the host's own drizzle-orm and is all
+ * a host needs (drizzle-kit reads the runtime objects for migrations).
+ *
+ * Written as a mapped-type-in-`extends` so inference defers to the
+ * *instantiated* namespace (matching the type-param's `Record<string, unknown>`
+ * constraint would collapse the access to `unknown` and yield `never`).
+ */
+type HostTable<
+	D extends DrizzleDialect,
+	TDrizzle extends DrizzleBuilders,
+> = TDrizzle extends {
+	[K in BaseTableClassName<D>]: AnyAbstractCtor<infer T>;
+}
+	? T
+	: never;
 
 /**
  * The record `generateDrizzleSchema` returns. Each key is the service prefix
  * followed by the capitalized logical table name (e.g. `ticketingTickets`), and
- * each table's SQL name is prefixed as `${prefix}_${name}` — mirroring the
- * runtime exactly so both the record keys and column types stay type-safe.
+ * each table is the host's own table type — so consumers name it through their
+ * own drizzle-orm, never futonic's.
  */
 export type InferDrizzleSchema<
 	TSchema extends ServiceDBSchema,
 	D extends DrizzleDialect,
 	TPrefix extends string,
+	TDrizzle extends DrizzleBuilders,
 > = {
 	[K in keyof TSchema["tables"] &
-		string as `${TPrefix}${Capitalize<K>}`]: DrizzleTableFor<
-		D,
-		`${TPrefix}_${TSchema["tables"][K]["name"] & string}`,
-		TSchema["tables"][K]["columns"]
-	>;
+		string as `${TPrefix}${Capitalize<K>}`]: HostTable<D, TDrizzle>;
 };
 
 // --- Runtime --------------------------------------------------------------
+
+// The injected builders are dialect-specific and untyped at this layer; the
+// return type is recovered from the caller's concrete namespace above.
+// biome-ignore lint/suspicious/noExplicitAny: injected drizzle builders
+type AnyBuilders = Record<string, any>;
+// biome-ignore lint/suspicious/noExplicitAny: dialect-specific column/table builder
+type ColumnBuilder = any;
+
+/**
+ * Physical column name for a logical (camelCase) column key. The runtime Kysely
+ * instance installs a `CamelCasePlugin`, so it queries snake_case columns; the
+ * generated tables must use the same snake_case SQL names to match.
+ */
+function toSnakeCase(name: string): string {
+	return name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+}
 
 /** Translates the schema's onDelete tokens to Drizzle's action strings. */
 function toDrizzleAction(
@@ -309,9 +104,65 @@ function toDrizzleAction(
 	return onDelete === "set-null" ? "set null" : onDelete;
 }
 
+/** Builds a scalar (non-enum) column from the injected dialect builders. */
+function scalarColumn(
+	dialect: DrizzleDialect,
+	d: AnyBuilders,
+	type: Exclude<ColumnDefinition["type"], "enum">,
+	name: string,
+): ColumnBuilder {
+	if (dialect === "pg") {
+		switch (type) {
+			case "string":
+				return d.text(name);
+			case "integer":
+				return d.integer(name);
+			case "boolean":
+				return d.boolean(name);
+			case "timestamp":
+				return d.timestamp(name);
+			case "json":
+				return d.jsonb(name);
+			case "blob":
+				return d.customType({ dataType: () => "bytea" })(name);
+		}
+	}
+	if (dialect === "mysql") {
+		switch (type) {
+			case "string":
+				return d.text(name);
+			case "integer":
+				return d.int(name);
+			case "boolean":
+				return d.boolean(name);
+			case "timestamp":
+				return d.datetime(name);
+			case "json":
+				return d.json(name);
+			case "blob":
+				return d.customType({ dataType: () => "blob" })(name);
+		}
+	}
+	switch (type) {
+		case "string":
+			return d.text(name);
+		case "integer":
+			return d.integer(name);
+		case "boolean":
+			return d.integer(name, { mode: "boolean" });
+		case "timestamp":
+			return d.integer(name, { mode: "timestamp" });
+		case "json":
+			return d.text(name, { mode: "json" });
+		case "blob":
+			return d.blob(name);
+	}
+}
+
 /** Builds a single Drizzle column, applying constraints and references. */
 function buildColumn(
 	dialect: DrizzleDialect,
+	d: AnyBuilders,
 	column: ColumnDefinition,
 	columnName: string,
 	tables: Record<string, ColumnBuilder>,
@@ -319,15 +170,9 @@ function buildColumn(
 	let builder: ColumnBuilder;
 	if (column.type === "enum") {
 		const values = (column.enumValues ?? []) as [string, ...string[]];
-		builder = ENUM_BUILDERS[dialect](columnName, values);
+		builder = d.text(columnName, { enum: values });
 	} else {
-		const factory = TYPE_MAP[dialect][column.type];
-		if (!factory) {
-			throw new Error(
-				`Unsupported column type "${column.type}" for dialect "${dialect}"`,
-			);
-		}
-		builder = factory(columnName);
+		builder = scalarColumn(dialect, d, column.type, columnName);
 	}
 
 	if (column.primaryKey) builder = builder.primaryKey();
@@ -355,45 +200,65 @@ function buildColumn(
 	return builder;
 }
 
+const TABLE_CTOR: Record<DrizzleDialect, string> = {
+	pg: "pgTable",
+	mysql: "mysqlTable",
+	sqlite: "sqliteTable",
+};
+
 /**
- * Generates a record of fully-typed Drizzle tables from a service DB schema.
+ * Generates a record of Drizzle tables from a service DB schema, using the
+ * host's injected dialect builders.
  *
- * @param serviceSchema The service's dialect-agnostic table definitions. Pass
- *   it as a `const` binding (or with `satisfies ServiceDBSchema`) to get precise
- *   per-column types on the result.
+ * @param serviceSchema The service's dialect-agnostic table definitions.
  * @param dialect       The target SQL dialect.
+ * @param prefix        Prefixes both the record keys and the physical table
+ *   names (`${prefix}_${name}`), matching the runtime's table scoping.
+ * @param drizzle       The host's drizzle dialect module — e.g.
+ *   `import * as pg from "drizzle-orm/pg-core"`. Determines the drizzle-orm
+ *   version of the returned tables (runtime and types).
  */
 export function generateDrizzleSchema<
 	const TSchema extends ServiceDBSchema,
 	D extends DrizzleDialect,
 	TPrefix extends string,
+	TDrizzle extends DrizzleBuilders,
 >({
 	serviceSchema,
 	dialect,
 	prefix,
+	drizzle,
 }: {
 	serviceSchema: TSchema;
 	dialect: D;
 	prefix: TPrefix;
-}): InferDrizzleSchema<TSchema, D, TPrefix> {
-	const constructTable = TABLE_CONSTRUCTORS[dialect];
-	if (!constructTable) {
-		throw new Error(`Unsupported dialect "${dialect}"`);
+	drizzle: TDrizzle;
+}): InferDrizzleSchema<TSchema, D, TPrefix, TDrizzle> {
+	const d = drizzle as AnyBuilders;
+	const constructTable = d[TABLE_CTOR[dialect]];
+	if (typeof constructTable !== "function") {
+		throw new Error(
+			`Injected drizzle module is missing "${TABLE_CTOR[dialect]}" for dialect "${dialect}"`,
+		);
 	}
 
 	// FK references are resolved by logical table name, so keep an internal map
 	// keyed by that; the returned record is keyed by the prefixed name.
-	const byLogicalName: Record<string, Table> = {};
-	const result: Record<string, Table> = {};
+	const byLogicalName: Record<string, ColumnBuilder> = {};
+	const result: Record<string, ColumnBuilder> = {};
 
 	for (const [tableName, tableDef] of Object.entries(serviceSchema.tables)) {
 		const def = tableDef as TableDefinition;
 		const columns: Record<string, ColumnBuilder> = {};
 		for (const [columnName, column] of Object.entries(def.columns)) {
+			// Map key stays the logical (camelCase) name so FK lookups and the
+			// returned table's properties match the schema; the physical SQL name
+			// is snake_cased to match the runtime Kysely `CamelCasePlugin`.
 			columns[columnName] = buildColumn(
 				dialect,
+				d,
 				column,
-				columnName,
+				toSnakeCase(columnName),
 				byLogicalName,
 			);
 		}
@@ -403,5 +268,5 @@ export function generateDrizzleSchema<
 		result[`${prefix}${capitalized}`] = table;
 	}
 
-	return result as unknown as InferDrizzleSchema<TSchema, D, TPrefix>;
+	return result as InferDrizzleSchema<TSchema, D, TPrefix, TDrizzle>;
 }
