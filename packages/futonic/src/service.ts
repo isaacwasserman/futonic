@@ -141,12 +141,9 @@ export type ServiceDefinition<
 };
 
 /**
- * The db-erased view of a {@link ServiceDefinition} that `defineService`
- * returns. The Kysely-typed builder parameters are replaced with `never`, so a
- * downstream service that exports its definition never drags the full
- * `Kysely<Schema>` type into its published declarations (which would force
- * consumers to inline it). Authoring keeps full typing via the
- * `ServiceDefinition` input passed to `defineService`.
+ * Db-erased view of a {@link ServiceDefinition} returned by `defineService`:
+ * the Kysely-typed builder params become `never` so a downstream service that
+ * exports its definition doesn't drag `Kysely<Schema>` into its public types.
  */
 export type ServiceBlueprint<
 	TDBSchema extends ServiceDBSchema,
@@ -161,6 +158,17 @@ export type ServiceBlueprint<
 	endpoints: (defineEndpoint: never) => TEndpoints;
 	serviceMethods?: (define: never) => TServiceMethods;
 };
+
+/** Strips the host's mount path so the router's root-defined endpoints match. */
+function stripBasePath(request: Request, basePath: string): Request {
+	if (basePath === "" || basePath === "/") return request;
+	const url = new URL(request.url);
+	if (url.pathname !== basePath && !url.pathname.startsWith(`${basePath}/`)) {
+		return request;
+	}
+	url.pathname = url.pathname.slice(basePath.length) || "/";
+	return new Request(url, request);
+}
 
 /** Validates the static definition once, up front. */
 function validateDefinition(id: string, dbSchema: ServiceDBSchema): void {
@@ -183,6 +191,11 @@ function validateDefinition(id: string, dbSchema: ServiceDBSchema): void {
 	}
 }
 
+export type HandlerOptions = {
+	/** Mount path to strip before routing (e.g. `/api/servicedesk`, or `/` at root). */
+	basePath: string;
+};
+
 export type FutonicService<
 	TEndpoints extends Record<string, Endpoint> = Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl> = Record<
@@ -191,7 +204,7 @@ export type FutonicService<
 	>,
 > = {
 	/** HTTP entry point. */
-	handler: (request: Request) => Promise<Response>;
+	handler: (request: Request, options: HandlerOptions) => Promise<Response>;
 	/**
 	 * The better-call endpoints — directly callable in-process, and the source
 	 * for the typesafe client: `createClient<typeof service.endpoints>()`.
@@ -272,10 +285,7 @@ export function createFutonicServiceConstructor<
 ): FutonicServiceConstructor<TConfig, TEndpoints, TServiceMethods> {
 	validateDefinition(definition.id, definition.dbSchema);
 
-	// The blueprint erases the builder param types (`never`) for the published
-	// surface; here we recover the authoring view to invoke the callbacks. This
-	// is the one authoring↔runtime boundary — a single downcast, sound because
-	// `ServiceDefinition` is assignable to `ServiceBlueprint`.
+	// Recover the erased builder params to invoke the callbacks.
 	const authored = definition as unknown as ServiceDefinition<
 		TDBSchema,
 		TConfigSchema,
@@ -339,7 +349,8 @@ export function createFutonicServiceConstructor<
 		) as ResolveServiceMethods<TServiceMethods>;
 
 		return {
-			handler: (request: Request): Promise<Response> => router.handler(request),
+			handler: (request: Request, options: HandlerOptions): Promise<Response> =>
+				router.handler(stripBasePath(request, options.basePath)),
 			endpoints,
 			router,
 			serviceMethods,

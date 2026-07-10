@@ -148,6 +148,7 @@ test("the http handler dispatches requests to endpoints", async () => {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ title: "yo" }),
 		}),
+		{ basePath: "/" },
 	);
 
 	expect(res.ok).toBe(true);
@@ -158,8 +159,34 @@ test("the http handler 404s unknown routes", async () => {
 	const svc = buildService();
 	const res = await svc.handler(
 		new Request("http://x/nope", { method: "GET" }),
+		{ basePath: "/" },
 	);
 	expect(res.status).toBe(404);
+});
+
+test("basePath is stripped from the request URL before routing", async () => {
+	const svc = buildService();
+
+	const unmounted = await svc.handler(
+		new Request("http://x/api/tickets", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ title: "yo" }),
+		}),
+		{ basePath: "/" },
+	);
+	expect(unmounted.status).toBe(404);
+
+	const mounted = await svc.handler(
+		new Request("http://x/api/tickets", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ title: "yo" }),
+		}),
+		{ basePath: "/api" },
+	);
+	expect(mounted.ok).toBe(true);
+	expect(await mounted.json()).toEqual({ id: "yo" });
 });
 
 test("generates the prefixed drizzle schema from the definition and dialect", () => {
