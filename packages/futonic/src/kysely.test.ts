@@ -8,7 +8,7 @@ import {
 	type KyselyFromServiceDBSchema,
 	createKysely,
 } from "./kysely";
-import { createSqliteConnection } from "./test-helpers";
+import { createSqliteConnection, drizzleFor } from "./test-helpers";
 
 test("returns a Kysely bound to the sqlite connection that runs queries", async () => {
 	const db = createKysely<ServiceDBSchema>(createSqliteConnection(), "sqlite");
@@ -71,6 +71,7 @@ test("a bare logical query hits the prefixed physical table at runtime", async (
 		serviceSchema,
 		dialect: "sqlite",
 		prefix: "ticketing",
+		drizzle: drizzleFor("sqlite"),
 	});
 	const physicalName = getTableName(drizzle.ticketingTicketEvents);
 	expect(physicalName).toBe("ticketing_ticket_events");

@@ -11,6 +11,7 @@ import {
 } from "better-call";
 import type { ServiceDBSchema } from "./db-schema";
 import {
+	type DrizzleBuilders,
 	type DrizzleDialect,
 	type InferDrizzleSchema,
 	generateDrizzleSchema,
@@ -45,17 +46,14 @@ function createDefaultLogger(id: string): Logger {
 export type ServiceConfig = Record<string, unknown> | {};
 
 /** The context handed to every endpoint and service method. */
-export type ServiceContext<TConfig extends Record<string, unknown>, TDb> = {
+export type ServiceContext<TConfig, TDb> = {
 	db: TDb;
 	config: TConfig;
 	logger: Logger;
 };
 
 /** The better-call middleware type that carries the service context. */
-export type ServiceMiddleware<
-	TConfig extends Record<string, unknown>,
-	TDb,
-> = Middleware<
+export type ServiceMiddleware<TConfig, TDb> = Middleware<
 	// biome-ignore lint/suspicious/noExplicitAny: matches better-call's own middleware handler signature
 	(inputCtx: Record<string, any>) => Promise<{
 		serviceCtx: ServiceContext<TConfig, TDb>;
@@ -63,7 +61,7 @@ export type ServiceMiddleware<
 >;
 
 /** Builds the middleware instance that injects the resolved service context. */
-function createServiceMiddleware<TConfig extends ServiceConfig, TDb>(
+function createServiceMiddleware<TConfig, TDb>(
 	serviceCtx: ServiceContext<TConfig, TDb>,
 ): ServiceMiddleware<TConfig, TDb> {
 	return createMiddleware(async () => ({ serviceCtx }));
@@ -74,19 +72,17 @@ function createServiceMiddleware<TConfig extends ServiceConfig, TDb>(
  * endpoint's `use`, so handlers read `ctx.context.serviceCtx` (typed
  * `{ db, config, logger }`) without wiring middleware per endpoint.
  */
-export type DefineEndpoint<TConfig extends ServiceConfig, TDb> = ReturnType<
+export type DefineEndpoint<TConfig, TDb> = ReturnType<
 	typeof createEndpoint.create<{ use: [ServiceMiddleware<TConfig, TDb>] }>
 >;
 
 // --- Service methods ------------------------------------------------------
 
 /** A service method implementation, with access to the service context. */
-export type ServiceMethodImpl<
-	TConfig extends ServiceConfig,
-	TDb,
-	TInput,
-	TOutput,
-> = (input: TInput, ctx: ServiceContext<TConfig, TDb>) => Promise<TOutput>;
+export type ServiceMethodImpl<TConfig, TDb, TInput, TOutput> = (
+	input: TInput,
+	ctx: ServiceContext<TConfig, TDb>,
+) => Promise<TOutput>;
 
 // biome-ignore lint/suspicious/noExplicitAny: constraint for any method impl
 export type AnyServiceMethodImpl = ServiceMethodImpl<any, any, any, any>;
@@ -95,10 +91,7 @@ export type AnyServiceMethodImpl = ServiceMethodImpl<any, any, any, any>;
  * The helper passed to the `serviceMethods` factory. It's an identity function
  * at runtime, but as a generic it captures each method's input/output types.
  */
-export type ServiceMethodBuilder<TConfig extends ServiceConfig, TDb> = <
-	TInput,
-	TOutput,
->(
+export type ServiceMethodBuilder<TConfig, TDb> = <TInput, TOutput>(
 	impl: ServiceMethodImpl<TConfig, TDb, TInput, TOutput>,
 ) => ServiceMethodImpl<TConfig, TDb, TInput, TOutput>;
 
@@ -117,14 +110,15 @@ export type ResolveServiceMethods<
 
 export type ServiceDefinition<
 	TDBSchema extends ServiceDBSchema,
-	TConfig extends ServiceConfig,
+	TConfigSchema extends StandardSchemaV1<unknown, ServiceConfig>,
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
 	TServiceId extends string,
+	TConfig = StandardSchemaV1.InferOutput<TConfigSchema>,
 > = {
 	id: TServiceId;
 	dbSchema: TDBSchema;
-	configSchema: StandardSchemaV1<TConfig>;
+	configSchema: TConfigSchema;
 	/**
 	 * Define endpoints with the passed `defineEndpoint` helper — a `createEndpoint`
 	 * that already carries the service middleware, so handlers can read
@@ -156,14 +150,14 @@ export type ServiceDefinition<
  */
 export type ServiceBlueprint<
 	TDBSchema extends ServiceDBSchema,
-	TConfig extends ServiceConfig,
+	TConfigSchema extends StandardSchemaV1<unknown, ServiceConfig>,
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
 	TServiceId extends string,
 > = {
 	id: TServiceId;
 	dbSchema: TDBSchema;
-	configSchema: StandardSchemaV1<TConfig>;
+	configSchema: TConfigSchema;
 	endpoints: (defineEndpoint: never) => TEndpoints;
 	serviceMethods?: (define: never) => TServiceMethods;
 };
@@ -210,7 +204,7 @@ export type FutonicService<
 };
 
 export type FutonicServiceConstructor<
-	TConfig extends ServiceConfig,
+	TConfig,
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
 > = (options: {
@@ -226,7 +220,10 @@ export type FutonicServiceConstructor<
  */
 export function defineService<
 	const TDBSchema extends ServiceDBSchema,
-	TConfig extends ServiceConfig = Record<string, never>,
+	TConfigSchema extends StandardSchemaV1<
+		unknown,
+		ServiceConfig
+	> = StandardSchemaV1<unknown, Record<string, never>>,
 	TEndpoints extends Record<string, Endpoint> = Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl> = Record<
 		string,
@@ -236,14 +233,14 @@ export function defineService<
 >(
 	definition: ServiceDefinition<
 		TDBSchema,
-		TConfig,
+		TConfigSchema,
 		TEndpoints,
 		TServiceMethods,
 		TServiceId
 	>,
 ): ServiceBlueprint<
 	TDBSchema,
-	TConfig,
+	TConfigSchema,
 	TEndpoints,
 	TServiceMethods,
 	TServiceId
@@ -253,17 +250,21 @@ export function defineService<
 
 export function createFutonicServiceConstructor<
 	TDBSchema extends ServiceDBSchema,
-	TConfig extends ServiceConfig = Record<string, never>,
+	TConfigSchema extends StandardSchemaV1<
+		unknown,
+		ServiceConfig
+	> = StandardSchemaV1<unknown, Record<string, never>>,
 	TEndpoints extends Record<string, Endpoint> = Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl> = Record<
 		string,
 		never
 	>,
 	TServiceId extends string = string,
+	TConfig = StandardSchemaV1.InferOutput<TConfigSchema>,
 >(
 	definition: ServiceBlueprint<
 		TDBSchema,
-		TConfig,
+		TConfigSchema,
 		TEndpoints,
 		TServiceMethods,
 		TServiceId
@@ -275,12 +276,13 @@ export function createFutonicServiceConstructor<
 	// surface; here we recover the authoring view to invoke the callbacks. This
 	// is the one authoring↔runtime boundary — a single downcast, sound because
 	// `ServiceDefinition` is assignable to `ServiceBlueprint`.
-	const authored = definition as ServiceDefinition<
+	const authored = definition as unknown as ServiceDefinition<
 		TDBSchema,
-		TConfig,
+		TConfigSchema,
 		TEndpoints,
 		TServiceMethods,
-		TServiceId
+		TServiceId,
+		TConfig
 	>;
 
 	return (options: {
@@ -305,7 +307,7 @@ export function createFutonicServiceConstructor<
 					.join(", ")}`,
 			);
 		}
-		const config = configResult.value;
+		const config = configResult.value as TConfig;
 
 		const db = createKysely<TDBSchema>(connection, provider, definition.id);
 		const logger = options.logger ?? createDefaultLogger(definition.id);
@@ -355,14 +357,17 @@ export function generateServiceDrizzleSchema<
 	const TDBSchema extends ServiceDBSchema,
 	TServiceId extends string,
 	D extends DrizzleDialect,
+	TDrizzle extends DrizzleBuilders,
 >(
 	definition: { id: TServiceId; dbSchema: TDBSchema },
 	dialect: D,
-): InferDrizzleSchema<TDBSchema, D, TServiceId> {
+	drizzle: TDrizzle,
+): InferDrizzleSchema<TDBSchema, D, TServiceId, TDrizzle> {
 	return generateDrizzleSchema({
 		serviceSchema: definition.dbSchema,
 		dialect,
 		prefix: definition.id,
+		drizzle,
 	});
 }
 

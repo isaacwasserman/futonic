@@ -10,7 +10,27 @@
  */
 
 import { Database } from "bun:sqlite";
+import * as mysqlCore from "drizzle-orm/mysql-core";
+import * as pgCore from "drizzle-orm/pg-core";
+import * as sqliteCore from "drizzle-orm/sqlite-core";
+import type { DrizzleBuilders, DrizzleDialect } from "./drizzle";
 import type { DatabaseConnection } from "./kysely";
+
+/**
+ * The drizzle dialect module a host would inject, keyed by dialect. Overloaded
+ * so a literal dialect yields the *concrete* namespace type (a union would drop
+ * the dialect-specific `pgTable`/etc. from `keyof`).
+ */
+export function drizzleFor(dialect: "pg"): typeof pgCore;
+export function drizzleFor(dialect: "mysql"): typeof mysqlCore;
+export function drizzleFor(dialect: "sqlite"): typeof sqliteCore;
+export function drizzleFor(dialect: DrizzleDialect): DrizzleBuilders {
+	return dialect === "pg"
+		? pgCore
+		: dialect === "mysql"
+			? mysqlCore
+			: sqliteCore;
+}
 
 /** An in-memory `bun:sqlite` connection shaped for Kysely's `SqliteDialect`. */
 export function createSqliteConnection(): DatabaseConnection {

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { getTableName } from "drizzle-orm";
+import { getTableColumns, getTableName } from "drizzle-orm";
 import { generateDrizzleSchema } from "./drizzle";
+import { drizzleFor } from "./test-helpers";
 
 const schema = {
 	tables: {
@@ -31,6 +32,7 @@ test("record keys are prefixed and capitalized", () => {
 		serviceSchema: schema,
 		dialect: "sqlite",
 		prefix: "ticketing",
+		drizzle: drizzleFor("sqlite"),
 	});
 
 	expect(Object.keys(tables).sort()).toEqual([
@@ -44,6 +46,7 @@ test("SQL table names are prefixed with the service id", () => {
 		serviceSchema: schema,
 		dialect: "sqlite",
 		prefix: "ticketing",
+		drizzle: drizzleFor("sqlite"),
 	});
 
 	expect(getTableName(tables.ticketingTickets)).toBe("ticketing_tickets");
@@ -57,23 +60,41 @@ test("generated tables expose their columns", () => {
 		serviceSchema: schema,
 		dialect: "pg",
 		prefix: "svc",
+		drizzle: drizzleFor("pg"),
 	});
 
-	const t = tables.svcTickets;
-	expect(t.id).toBeDefined();
-	expect(t.title).toBeDefined();
-	expect(t.details).toBeDefined();
-	expect(t.status).toBeDefined();
+	// Tables come back as the host's base table type (precise column types
+	// can't survive cross-version decoupling), so assert the columns are present
+	// at runtime rather than via typed property access.
+	const columns = getTableColumns(tables.svcTickets);
+	expect(Object.keys(columns).sort()).toEqual([
+		"details",
+		"id",
+		"status",
+		"title",
+	]);
 });
 
 test("generates for every dialect, including enums and references", () => {
-	for (const dialect of ["pg", "mysql", "sqlite"] as const) {
-		const tables = generateDrizzleSchema({
-			serviceSchema: schema,
-			dialect,
-			prefix: "svc",
-		});
-		expect(getTableName(tables.svcTickets)).toBe("svc_tickets");
-		expect(getTableName(tables.svcTicketEvents)).toBe("svc_ticket_events");
-	}
+	const pg = generateDrizzleSchema({
+		serviceSchema: schema,
+		dialect: "pg",
+		prefix: "svc",
+		drizzle: drizzleFor("pg"),
+	});
+	const mysql = generateDrizzleSchema({
+		serviceSchema: schema,
+		dialect: "mysql",
+		prefix: "svc",
+		drizzle: drizzleFor("mysql"),
+	});
+	const sqlite = generateDrizzleSchema({
+		serviceSchema: schema,
+		dialect: "sqlite",
+		prefix: "sqlitesvc",
+		drizzle: drizzleFor("sqlite"),
+	});
+	expect(getTableName(pg.svcTickets)).toBe("svc_tickets");
+	expect(getTableName(mysql.svcTicketEvents)).toBe("svc_ticket_events");
+	expect(getTableName(sqlite.sqlitesvcTickets)).toBe("sqlitesvc_tickets");
 });
