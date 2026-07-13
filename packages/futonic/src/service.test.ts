@@ -103,6 +103,16 @@ function buildService(logger?: Logger) {
 						return { id: ctx.body.title };
 					},
 				),
+				listTickets: defineEndpoint(
+					"/tickets",
+					{ method: "GET" },
+					async () => ({ tickets: [] }),
+				),
+				updateTicket: defineEndpoint(
+					"/tickets/:id",
+					{ method: "PATCH", body: type({ title: "string" }) },
+					async (ctx) => ({ id: ctx.params.id }),
+				),
 			}),
 			serviceMethods: (define) => ({
 				whoami: define(async (_input: Record<string, never>, { config }) => ({
@@ -197,6 +207,68 @@ test("openapi is enabled at /reference by default and can be disabled", async ()
 		.createHandler({ basePath: "/", openApi: false })
 		.handle(new Request("http://x/reference", { method: "GET" }));
 	expect(disabled.status).toBe(404);
+});
+
+test("openapi document keeps every method of a shared path and all verbs", async () => {
+	const svc = buildService();
+	const res = await svc.createHandler({ basePath: "/" }).handle(
+		new Request("http://x/reference", {
+			method: "GET",
+			headers: { accept: "application/json" },
+		}),
+	);
+	const doc = (await res.json()) as {
+		paths: Record<string, Record<string, unknown>>;
+	};
+
+	expect(res.headers.get("content-type")).toContain("application/json");
+	expect(Object.keys(doc.paths["/tickets"]).sort()).toEqual(["get", "post"]);
+	expect(doc.paths["/tickets/{id}"]).toHaveProperty("patch");
+});
+
+async function openApiDoc(
+	svc: ReturnType<typeof buildService>,
+	openApi?: Parameters<typeof svc.createHandler>[0]["openApi"],
+) {
+	const res = await svc.createHandler({ basePath: "/", openApi }).handle(
+		new Request("http://x/reference", {
+			method: "GET",
+			headers: { accept: "application/json" },
+		}),
+	);
+	return (await res.json()) as {
+		security?: unknown;
+		components: { securitySchemes?: unknown };
+		paths: Record<string, Record<string, { security?: unknown }>>;
+	};
+}
+
+test("asserts no authentication scheme by default", async () => {
+	const doc = await openApiDoc(buildService());
+	expect(doc.security).toBeUndefined();
+	expect(doc.components.securitySchemes).toBeUndefined();
+	expect(doc.paths["/tickets"].post.security).toBeUndefined();
+});
+
+test("emits author-supplied security schemes and requirement", async () => {
+	const doc = await openApiDoc(buildService(), {
+		securitySchemes: {
+			sessionCookie: {
+				type: "apiKey",
+				in: "cookie",
+				name: "better-auth.session_token",
+			},
+		},
+		security: [{ sessionCookie: [] }],
+	});
+	expect(doc.components.securitySchemes).toEqual({
+		sessionCookie: {
+			type: "apiKey",
+			in: "cookie",
+			name: "better-auth.session_token",
+		},
+	});
+	expect(doc.security).toEqual([{ sessionCookie: [] }]);
 });
 
 test("generates the prefixed drizzle schema from the definition and dialect", () => {

@@ -1,6 +1,7 @@
 export * from "./db-schema";
 export * from "./drizzle";
 export * from "./kysely";
+export * from "./openapi";
 export * from "./service";
 
 // Surface types a downstream service re-exports (`export type * from "futonic"`)

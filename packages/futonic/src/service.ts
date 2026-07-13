@@ -5,7 +5,6 @@ import {
 	type Endpoint,
 	type Middleware,
 	type Router,
-	type RouterConfig,
 	createEndpoint,
 	createMiddleware,
 	createRouter,
@@ -23,6 +22,11 @@ import {
 	type KyselyFromServiceDBSchema,
 	createKysely,
 } from "./kysely";
+import {
+	type OpenApiOptions,
+	generateOpenApiDocument,
+	openApiReferenceHtml,
+} from "./openapi";
 
 /** A minimal structured logger. `console` satisfies this shape. */
 export type Logger = {
@@ -71,7 +75,8 @@ function createServiceMiddleware<TConfig, TDb>(
 /**
  * A pre-bound `createEndpoint` that spreads the service middleware into every
  * endpoint's `use`, so handlers read `ctx.context.serviceCtx` (typed
- * `{ db, config, logger }`) without wiring middleware per endpoint.
+ * `{ db, config, logger }`) without wiring middleware per endpoint. The typed
+ * `metadata.openapi.security` used per-endpoint comes from better-call itself.
  */
 export type DefineEndpoint<TConfig, TDb> = ReturnType<
 	typeof createEndpoint.create<{ use: [ServiceMiddleware<TConfig, TDb>] }>
@@ -192,10 +197,7 @@ function validateDefinition(id: string, dbSchema: ServiceDBSchema): void {
 	}
 }
 
-/** The better-call router's OpenAPI route configuration. */
-export type OpenapiOptions = NonNullable<RouterConfig["openapi"]>;
-
-const DEFAULT_OPENAPI_OPTIONS: OpenapiOptions = {
+const DEFAULT_OPENAPI_OPTIONS: OpenApiOptions = {
 	disabled: false,
 	path: "/reference",
 };
@@ -204,10 +206,10 @@ export type HandlerOptions = {
 	/** Mount path to strip before routing (e.g. `/api/servicedesk`, or `/` at root). */
 	basePath: string;
 	/**
-	 * Configure the better-call router's OpenAPI route. Enabled at `/reference`
-	 * by default; pass `false` to disable it, or override individual fields.
+	 * Configure the OpenAPI reference route. Enabled at `/reference` by default;
+	 * pass `false` to disable it, or override individual fields.
 	 */
-	openApi?: OpenapiOptions | false;
+	openApi?: OpenApiOptions | false;
 };
 
 export type FutonicHandler = {
@@ -369,11 +371,38 @@ export function createFutonicServiceConstructor<
 
 		return {
 			createHandler: (handlerOptions: HandlerOptions): FutonicHandler => {
-				const openapi =
+				const openApi: OpenApiOptions =
 					handlerOptions.openApi === false
 						? { disabled: true }
 						: { ...DEFAULT_OPENAPI_OPTIONS, ...handlerOptions.openApi };
-				const configuredRouter = createRouter({ ...endpoints }, { openapi });
+
+				const routeEndpoints = { ...endpoints } as Record<string, Endpoint>;
+				if (!openApi.disabled) {
+					const doc = generateOpenApiDocument(endpoints, openApi);
+					const json = JSON.stringify(doc);
+					const html = openApiReferenceHtml(doc, openApi.theme);
+					routeEndpoints.openapi = createEndpoint(
+						openApi.path ?? "/reference",
+						{ method: "GET" },
+						async (ctx) => {
+							const accept =
+								(ctx as { request?: Request }).request?.headers.get("accept") ??
+								"";
+							if (accept.includes("application/json")) {
+								return new Response(json, {
+									headers: { "Content-Type": "application/json" },
+								});
+							}
+							return new Response(html, {
+								headers: { "Content-Type": "text/html" },
+							});
+						},
+					) as unknown as Endpoint;
+				}
+
+				const configuredRouter = createRouter(routeEndpoints, {
+					openapi: { disabled: true },
+				});
 				return {
 					handle: (request: Request): Promise<Response> =>
 						configuredRouter.handler(
