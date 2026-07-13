@@ -151,10 +151,21 @@ const route = (req: Request) => handler.handle(req);
 export { route as GET, route as POST, route as PUT, route as DELETE, route as PATCH };
 ```
 
-An OpenAPI reference is served at `/reference` by default. Pass `openApi` to override better-call's router OpenAPI config, or `openApi: false` to disable it:
+An OpenAPI reference is served at `/reference` by default. Pass `openApi` to override the document `info`, `servers`, `path`, or `theme`, or `openApi: false` to disable it. Futonic is auth-agnostic and asserts no security scheme on its own — declare your host's auth via `securitySchemes`/`security` (standard OpenAPI objects):
 
 ```typescript
-const handler = svc.createHandler({ basePath: "/api/billing", openApi: false });
+const handler = svc.createHandler({
+	basePath: "/api/billing",
+	openApi: {
+		securitySchemes: {
+			sessionCookie: { type: "apiKey", in: "cookie", name: "better-auth.session_token" },
+		},
+		security: [{ sessionCookie: [] }],
+	},
+});
+
+// or turn it off entirely
+const bare = svc.createHandler({ basePath: "/api/billing", openApi: false });
 ```
 
 That's it. The billing service handles requests at `/api/billing/*`, stores data in the host's database under prefixed tables, and the host never had to know futonic was involved — it just installed `@acme/billing` and ran it. On teardown, `await svc.shutdown()`.
