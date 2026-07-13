@@ -3,7 +3,15 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import {
 	type Endpoint,
+	type EndpointContext,
+	type EndpointMetadata,
+	type EndpointRuntimeOptions,
+	type HTTPMethod,
 	type Middleware,
+	type ResolveBodyInput,
+	type ResolveErrorInput,
+	type ResolveMetaInput,
+	type ResolveQueryInput,
 	type Router,
 	createEndpoint,
 	createMiddleware,
@@ -23,6 +31,7 @@ import {
 	createKysely,
 } from "./kysely";
 import {
+	OUTPUT_METADATA_KEY,
 	type OpenApiOptions,
 	generateOpenApiDocument,
 	openApiReferenceHtml,
@@ -72,14 +81,82 @@ function createServiceMiddleware<TConfig, TDb>(
 	return createMiddleware(async () => ({ serviceCtx }));
 }
 
+/** Resolves the handler's return / endpoint result type from an optional output schema. */
+type InferEndpointResult<OutputSchema, R> =
+	OutputSchema extends StandardSchemaV1
+		? StandardSchemaV1.InferOutput<OutputSchema>
+		: R;
+
 /**
  * A pre-bound `createEndpoint` that spreads the service middleware into every
  * endpoint's `use`, so handlers read `ctx.context.serviceCtx` (typed
  * `{ db, config, logger }`) without wiring middleware per endpoint. The typed
  * `metadata.openapi.security` used per-endpoint comes from better-call itself.
+ *
+ * Reconstructs better-call's `createEndpoint.create` signature so it can add an
+ * `output` option: a Standard Schema whose inferred output the handler's return
+ * must match (checked at compile time only) and which is emitted as the `200`
+ * response schema in the OpenAPI document.
  */
-export type DefineEndpoint<TConfig, TDb> = ReturnType<
-	typeof createEndpoint.create<{ use: [ServiceMiddleware<TConfig, TDb>] }>
+export type DefineEndpoint<TConfig, TDb> = <
+	Path extends string,
+	Method extends HTTPMethod | HTTPMethod[] | "*",
+	BodySchema extends object | undefined = undefined,
+	QuerySchema extends object | undefined = undefined,
+	ReqHeaders extends boolean = false,
+	ReqRequest extends boolean = false,
+	Meta extends EndpointMetadata | undefined = undefined,
+	ErrorSchema extends StandardSchemaV1 | undefined = undefined,
+	OutputSchema extends StandardSchemaV1 | undefined = undefined,
+	R = unknown,
+>(
+	path: Path,
+	options: Omit<
+		EndpointRuntimeOptions,
+		| "method"
+		| "body"
+		| "query"
+		| "error"
+		| "requireHeaders"
+		| "requireRequest"
+		| "metadata"
+	> & {
+		method: Method;
+		body?: BodySchema;
+		query?: QuerySchema;
+		requireHeaders?: ReqHeaders;
+		requireRequest?: ReqRequest;
+		error?: ErrorSchema;
+		metadata?: Meta;
+		/**
+		 * Standard Schema whose inferred output the handler's return must match
+		 * (compile-time only, not validated at runtime). Emitted as the `200`
+		 * response schema in the OpenAPI document.
+		 */
+		output?: OutputSchema;
+	},
+	handler: (
+		ctx: EndpointContext<
+			Path,
+			Method,
+			BodySchema,
+			QuerySchema,
+			[ServiceMiddleware<TConfig, TDb>],
+			ReqHeaders,
+			ReqRequest,
+			{ serviceCtx: ServiceContext<TConfig, TDb> },
+			Meta
+		>,
+	) => Promise<InferEndpointResult<OutputSchema, R>>,
+) => Endpoint<
+	Path,
+	Method,
+	ResolveBodyInput<BodySchema, Meta>,
+	ResolveQueryInput<QuerySchema, Meta>,
+	[ServiceMiddleware<TConfig, TDb>],
+	Awaited<InferEndpointResult<OutputSchema, R>>,
+	ResolveMetaInput<Meta>,
+	ResolveErrorInput<ErrorSchema, Meta>
 >;
 
 // --- Service methods ------------------------------------------------------
@@ -347,8 +424,26 @@ export function createFutonicServiceConstructor<
 			KyselyFromServiceDBSchema<TDBSchema>
 		> = { db, config, logger };
 
-		const defineEndpoint = createEndpoint.create({
+		const baseDefineEndpoint = createEndpoint.create({
 			use: [createServiceMiddleware(serviceCtx)],
+		});
+		// better-call rebuilds its runtime options from a fixed key set, dropping
+		// unknown ones — so relocate `output` onto `metadata` (which it preserves)
+		// where the OpenAPI generator reads it.
+		const defineEndpoint = ((
+			path: string,
+			options: Record<string, unknown>,
+			handler: unknown,
+		) => {
+			const { output, metadata, ...rest } = options as {
+				output?: unknown;
+				metadata?: Record<string, unknown>;
+			};
+			const resolved = output
+				? { ...rest, metadata: { ...metadata, [OUTPUT_METADATA_KEY]: output } }
+				: options;
+			// biome-ignore lint/suspicious/noExplicitAny: forwarding to better-call's generic factory
+			return (baseDefineEndpoint as any)(path, resolved, handler);
 		}) as DefineEndpoint<TConfig, KyselyFromServiceDBSchema<TDBSchema>>;
 		const endpoints = authored.endpoints(defineEndpoint);
 		const router = createRouter(endpoints, { openapi: { disabled: true } });
@@ -378,13 +473,23 @@ export function createFutonicServiceConstructor<
 
 				const routeEndpoints = { ...endpoints } as Record<string, Endpoint>;
 				if (!openApi.disabled) {
-					const doc = generateOpenApiDocument(endpoints, openApi);
-					const json = JSON.stringify(doc);
-					const html = openApiReferenceHtml(doc, openApi.theme);
+					let rendered: Promise<{ json: string; html: string }> | null = null;
+					const render = () => {
+						if (!rendered) {
+							rendered = generateOpenApiDocument(endpoints, openApi).then(
+								(doc) => ({
+									json: JSON.stringify(doc),
+									html: openApiReferenceHtml(doc, openApi.theme),
+								}),
+							);
+						}
+						return rendered;
+					};
 					routeEndpoints.openapi = createEndpoint(
 						openApi.path ?? "/reference",
 						{ method: "GET" },
 						async (ctx) => {
+							const { json, html } = await render();
 							const accept =
 								(ctx as { request?: Request }).request?.headers.get("accept") ??
 								"";

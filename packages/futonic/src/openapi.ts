@@ -1,5 +1,7 @@
 /** Futonic's OpenAPI document generator for a better-call endpoint set. */
 
+import { toJsonSchema } from "@standard-community/standard-json";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type { Endpoint } from "better-call";
 import type { OpenAPIV3_1 } from "openapi-types";
 
@@ -33,11 +35,18 @@ export type OpenApiOptions = {
 	theme?: string;
 };
 
+/** Metadata key under which `defineEndpoint` stashes an endpoint's output schema. */
+export const OUTPUT_METADATA_KEY = "futonicOutput";
+
 type EndpointOptions = {
 	method: string | string[];
 	body?: unknown;
 	query?: unknown;
-	metadata?: { SERVER_ONLY?: boolean; openapi?: OpenAPIV3_1.OperationObject };
+	metadata?: {
+		SERVER_ONLY?: boolean;
+		openapi?: OpenAPIV3_1.OperationObject;
+		[OUTPUT_METADATA_KEY]?: unknown;
+	};
 };
 
 const DEFAULT_INFO: OpenApiInfo = {
@@ -73,23 +82,26 @@ const ERROR_DESCRIPTIONS: Record<string, string> = {
 		"Internal Server Error. This is a problem with the server that you cannot fix.",
 };
 
-const DEFAULT_RESPONSES: OpenAPIV3_1.ResponsesObject = Object.fromEntries(
-	Object.entries(ERROR_DESCRIPTIONS).map(([code, description]) => [
-		code,
-		{
-			description,
-			content: {
-				"application/json": {
-					schema: {
-						type: "object",
-						properties: { message: { type: "string" } },
-						required: ["message"],
+const DEFAULT_RESPONSES: OpenAPIV3_1.ResponsesObject = {
+	"200": { description: "Success." },
+	...Object.fromEntries(
+		Object.entries(ERROR_DESCRIPTIONS).map(([code, description]) => [
+			code,
+			{
+				description,
+				content: {
+					"application/json": {
+						schema: {
+							type: "object",
+							properties: { message: { type: "string" } },
+							required: ["message"],
+						},
 					},
 				},
 			},
-		},
-	]),
-);
+		]),
+	),
+};
 
 /** Rewrite rou3-style `:param` segments to OpenAPI `{param}`, collecting names. */
 function toOpenApiPath(path: string): { path: string; params: string[] } {
@@ -107,32 +119,37 @@ function toOpenApiPath(path: string): { path: string; params: string[] } {
 }
 
 /**
- * Best-effort JSON Schema for a Standard Schema validator. Uses the validator's
- * own `toJsonSchema()` (e.g. arktype) when present; callers fall back otherwise.
+ * Best-effort JSON Schema for a Standard Schema validator. Dispatches on the
+ * validator's `~standard` vendor (zod, arktype, valibot, …) to the appropriate
+ * converter; falls back to a bare object schema for anything unrecognized.
  */
-function schemaToJsonSchema(schema: unknown): OpenAPIV3_1.SchemaObject {
-	// A validator may be an object or a callable (e.g. arktype's `Type`).
+async function schemaToJsonSchema(
+	schema: unknown,
+): Promise<OpenAPIV3_1.SchemaObject> {
 	const fallback: OpenAPIV3_1.SchemaObject = { type: "object" };
+	// A validator may be an object or a callable (e.g. arktype's `Type`).
 	if (
 		schema === null ||
-		(typeof schema !== "object" && typeof schema !== "function")
+		(typeof schema !== "object" && typeof schema !== "function") ||
+		!("~standard" in schema)
 	) {
 		return fallback;
 	}
-	const withMethod = schema as { toJsonSchema?: () => unknown };
-	if (typeof withMethod.toJsonSchema !== "function") return fallback;
 	try {
-		const result = withMethod.toJsonSchema();
-		if (!result || typeof result !== "object") return fallback;
-		const { $schema, ...rest } = result as Json;
+		const { $schema, ...rest } = (await toJsonSchema(
+			schema as StandardSchemaV1,
+		)) as Json;
 		return rest as OpenAPIV3_1.SchemaObject;
 	} catch {
 		return fallback;
 	}
 }
 
-function queryParameters(schema: unknown): OpenAPIV3_1.ParameterObject[] {
-	const json = schemaToJsonSchema(schema) as {
+async function queryParameters(
+	schema: unknown,
+): Promise<OpenAPIV3_1.ParameterObject[]> {
+	if (!schema) return [];
+	const json = (await schemaToJsonSchema(schema)) as {
 		properties?: Record<string, OpenAPIV3_1.SchemaObject>;
 		required?: string[];
 	};
@@ -146,16 +163,16 @@ function queryParameters(schema: unknown): OpenAPIV3_1.ParameterObject[] {
 	})) as OpenAPIV3_1.ParameterObject[];
 }
 
-function requestBody(
+async function requestBody(
 	options: EndpointOptions,
-): OpenAPIV3_1.RequestBodyObject | undefined {
+): Promise<OpenAPIV3_1.RequestBodyObject | undefined> {
 	const override = options.metadata?.openapi?.requestBody;
 	if (override) return override as OpenAPIV3_1.RequestBodyObject;
 	if (!options.body) return undefined;
 	return {
 		required: true,
 		content: {
-			"application/json": { schema: schemaToJsonSchema(options.body) },
+			"application/json": { schema: await schemaToJsonSchema(options.body) },
 		},
 	};
 }
@@ -165,10 +182,10 @@ function requestBody(
  * better-call's own generator this merges every method onto its path (rather
  * than overwriting), emits all HTTP verbs, and derives path parameters.
  */
-export function generateOpenApiDocument(
+export async function generateOpenApiDocument(
 	endpoints: Record<string, Endpoint>,
 	options: OpenApiOptions = {},
-): OpenAPIV3_1.Document {
+): Promise<OpenAPIV3_1.Document> {
 	const paths: OpenAPIV3_1.PathsObject = {};
 
 	for (const endpoint of Object.values(endpoints)) {
@@ -187,16 +204,31 @@ export function generateOpenApiDocument(
 		const meta = opts.metadata?.openapi;
 		const parameters = [
 			...pathParameters,
-			...queryParameters(opts.query),
+			...(await queryParameters(opts.query)),
 			...((meta?.parameters as OpenAPIV3_1.ParameterObject[]) ?? []),
 		];
+		const output = opts.metadata?.[OUTPUT_METADATA_KEY];
+		const successResponse = output
+			? {
+					"200": {
+						description: "Success.",
+						content: {
+							"application/json": {
+								schema: await schemaToJsonSchema(output),
+							},
+						},
+					},
+				}
+			: undefined;
 
 		paths[path] ??= {};
 		const pathItem = paths[path] as Record<string, OpenAPIV3_1.OperationObject>;
 		for (const rawMethod of methods) {
 			const method = String(rawMethod).toLowerCase();
 			if (!HTTP_METHODS.has(method)) continue;
-			const body = BODYLESS_METHODS.has(method) ? undefined : requestBody(opts);
+			const body = BODYLESS_METHODS.has(method)
+				? undefined
+				: await requestBody(opts);
 			pathItem[method] = {
 				tags: ["Default", ...(meta?.tags ?? [])],
 				summary: meta?.summary,
@@ -205,7 +237,11 @@ export function generateOpenApiDocument(
 				security: meta?.security,
 				...(parameters.length > 0 && { parameters }),
 				...(body && { requestBody: body }),
-				responses: { ...DEFAULT_RESPONSES, ...meta?.responses },
+				responses: {
+					...DEFAULT_RESPONSES,
+					...successResponse,
+					...meta?.responses,
+				},
 			};
 		}
 	}
