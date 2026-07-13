@@ -274,7 +274,13 @@ export const ticketingDefinition = defineService({
   endpoints: (defineEndpoint) => ({
     createTicket: defineEndpoint(
       "/tickets",
-      { method: "POST", body: type({ title: "string", summary: "string" }) },
+      {
+        method: "POST",
+        body: type({ title: "string", summary: "string" }),
+        // `output` (any Standard Schema) is compile-time-checked against the
+        // handler's return type and emitted as the `200` response schema.
+        output: type({ id: "string" }),
+      },
       async (ctx) => {
         const { db, config, logger } = ctx.context.serviceCtx;
         logger.info("creating ticket", ctx.body.title);

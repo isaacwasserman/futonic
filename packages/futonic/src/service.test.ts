@@ -105,7 +105,7 @@ function buildService(logger?: Logger) {
 				),
 				listTickets: defineEndpoint(
 					"/tickets",
-					{ method: "GET" },
+					{ method: "GET", query: type({ "q?": "string" }) },
 					async () => ({ tickets: [] }),
 				),
 				updateTicket: defineEndpoint(
@@ -225,6 +225,91 @@ test("openapi document keeps every method of a shared path and all verbs", async
 	expect(Object.keys(doc.paths["/tickets"]).sort()).toEqual(["get", "post"]);
 	expect(doc.paths["/tickets/{id}"]).toHaveProperty("patch");
 });
+
+test("derives request-body, query, and success schemas from validators", async () => {
+	const svc = buildService();
+	const res = await svc.createHandler({ basePath: "/" }).handle(
+		new Request("http://x/reference", {
+			method: "GET",
+			headers: { accept: "application/json" },
+		}),
+	);
+	const doc = (await res.json()) as {
+		paths: Record<string, Record<string, any>>;
+	};
+
+	const post = doc.paths["/tickets"].post;
+	expect(
+		post.requestBody.content["application/json"].schema.properties,
+	).toHaveProperty("title");
+	expect(post.responses).toHaveProperty("200");
+
+	const get = doc.paths["/tickets"].get;
+	expect(get.parameters).toContainEqual(
+		expect.objectContaining({ name: "q", in: "query" }),
+	);
+});
+
+test("an output schema is emitted as the 200 response schema", async () => {
+	const make = createFutonicServiceConstructor(
+		defineService({
+			id: "things",
+			dbSchema,
+			configSchema: type({}),
+			endpoints: (defineEndpoint) => ({
+				getThing: defineEndpoint(
+					"/things",
+					{ method: "GET", output: type({ id: "string", count: "number" }) },
+					async () => ({ id: "t1", count: 1 }),
+				),
+			}),
+		}),
+	);
+	const svc = make({
+		config: {},
+		database: { connection: createSqliteConnection(), provider: "sqlite" },
+	});
+	const res = await svc.createHandler({ basePath: "/" }).handle(
+		new Request("http://x/reference", {
+			method: "GET",
+			headers: { accept: "application/json" },
+		}),
+	);
+	const doc = (await res.json()) as {
+		paths: Record<string, Record<string, any>>;
+	};
+	const schema =
+		doc.paths["/things"].get.responses["200"].content["application/json"]
+			.schema;
+	expect(schema.properties).toHaveProperty("id");
+	expect(schema.properties).toHaveProperty("count");
+});
+
+// Type-level assertions (never executed) — the output schema must constrain the
+// handler's return type at compile time.
+async function _outputTypeChecks() {
+	createFutonicServiceConstructor(
+		defineService({
+			id: "typecheck",
+			dbSchema,
+			configSchema: type({}),
+			endpoints: (defineEndpoint) => ({
+				good: defineEndpoint(
+					"/good",
+					{ method: "GET", output: type({ id: "string" }) },
+					async () => ({ id: "ok" }),
+				),
+				bad: defineEndpoint(
+					"/bad",
+					{ method: "GET", output: type({ id: "string" }) },
+					// @ts-expect-error handler return must match the output schema
+					async () => ({ id: 123 }),
+				),
+			}),
+		}),
+	);
+}
+void _outputTypeChecks;
 
 async function openApiDoc(
 	svc: ReturnType<typeof buildService>,
