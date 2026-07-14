@@ -149,6 +149,49 @@ test("service methods are bound to the config context", async () => {
 	expect(await svc.serviceMethods.whoami({})).toEqual({ token: "secret" });
 });
 
+test("a call-time endpoints override re-types the returned endpoints", async () => {
+	const make = createFutonicServiceConstructor(
+		defineService({
+			id: "typed",
+			dbSchema,
+			configSchema: type({ token: "string" }),
+			endpoints: (defineEndpoint) => ({
+				getThing: defineEndpoint("/thing", { method: "GET" }, async () => ({
+					payload: {} as Record<string, unknown>,
+				})),
+			}),
+		}),
+	);
+	const database = {
+		connection: createSqliteConnection(),
+		provider: "sqlite" as const,
+	};
+
+	const plain = make({ config: { token: "t" }, database });
+	type PlainEndpoints = typeof plain.endpoints;
+
+	type OverrideEndpoints = {
+		getThing: PlainEndpoints["getThing"] & { __override: "meta" };
+	};
+	const overridden = make<OverrideEndpoints>({
+		config: { token: "t" },
+		database,
+	});
+
+	type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B
+		? 1
+		: 2
+		? true
+		: false;
+	type Expect<T extends true> = T;
+	type _default = Expect<Equal<typeof plain.endpoints, PlainEndpoints>>;
+	type _overridden = Expect<
+		Equal<typeof overridden.endpoints, OverrideEndpoints>
+	>;
+
+	expect(await overridden.endpoints.getThing()).toEqual({ payload: {} });
+});
+
 test("the http handler dispatches requests to endpoints", async () => {
 	const svc = buildService();
 

@@ -1,6 +1,5 @@
 node_modules/
 dist/
-packages/futonic/README.md
 *.tsbuildinfo
 .env
 .env.*
