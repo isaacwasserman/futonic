@@ -314,15 +314,28 @@ export type FutonicService<
 	serviceMethods: ResolveServiceMethods<TServiceMethods>;
 };
 
+/**
+ * The service factory returned by {@link createFutonicServiceConstructor}.
+ *
+ * Its call signature takes an optional `TEndpointsOverride` type argument that
+ * re-types the returned `endpoints` (and therefore the typesafe client derived
+ * from them). It defaults to the endpoints inferred from the definition, so
+ * plain calls are unaffected. A downstream service that parameterizes an
+ * endpoint's schema by a caller-supplied type (e.g. a typed metadata payload)
+ * passes the matching re-typed endpoints here to surface that type end-to-end
+ * without an `as`-cast at the call site — the runtime endpoints are identical.
+ */
 export type FutonicServiceConstructor<
 	TConfig,
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
-> = (options: {
+> = <
+	TEndpointsOverride extends Record<string, Endpoint> = TEndpoints,
+>(options: {
 	config: TConfig;
 	database: { connection: DatabaseConnection; provider: DatabaseProvider };
 	logger?: Logger;
-}) => FutonicService<TEndpoints, TServiceMethods>;
+}) => FutonicService<TEndpointsOverride, TServiceMethods>;
 
 /**
  * Identity helper that captures a service definition's types so the same
@@ -393,11 +406,13 @@ export function createFutonicServiceConstructor<
 		TConfig
 	>;
 
-	return (options: {
+	return <
+		TEndpointsOverride extends Record<string, Endpoint> = TEndpoints,
+	>(options: {
 		config: TConfig;
 		database: { connection: DatabaseConnection; provider: DatabaseProvider };
 		logger?: Logger;
-	}) => {
+	}): FutonicService<TEndpointsOverride, TServiceMethods> => {
 		const { connection, provider } = options.database;
 
 		const configResult = authored.configSchema["~standard"].validate(
@@ -515,7 +530,9 @@ export function createFutonicServiceConstructor<
 						),
 				};
 			},
-			endpoints,
+			// The runtime endpoints are the definition's; `TEndpointsOverride` is a
+			// caller-supplied re-typing (identical shape, narrowed payload types).
+			endpoints: endpoints as unknown as TEndpointsOverride,
 			router,
 			serviceMethods,
 		};

@@ -25,6 +25,4 @@ await Bun.build({
 
 await $`bunx tsc -p tsconfig.build.json --emitDeclarationOnly`;
 
-await $`cp ../../README.md ./README.md`;
-
 console.log("[futonic] Build complete.");
