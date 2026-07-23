@@ -123,24 +123,28 @@ export type DatabaseProvider = "pg" | "mysql" | "sqlite";
  */
 export type DatabaseConnection = PostgresPool | MysqlPool | SqliteDatabase;
 
+/** Build a Kysely dialect for a provider (no plugins). */
+export function createDialect(
+	connection: DatabaseConnection,
+	provider: DatabaseProvider,
+): Dialect {
+	switch (provider) {
+		case "pg":
+			return new PostgresDialect({ pool: connection as PostgresPool });
+		case "mysql":
+			return new MysqlDialect({ pool: connection as MysqlPool });
+		case "sqlite":
+			return new SqliteDialect({ database: connection as SqliteDatabase });
+	}
+}
+
 /** Build a typed Kysely instance for a provider. */
 export function createKysely<TDBSchema extends ServiceDBSchema>(
 	connection: DatabaseConnection,
 	provider: DatabaseProvider,
 	prefix?: string,
 ): KyselyFromServiceDBSchema<TDBSchema> {
-	let dialect: Dialect;
-	switch (provider) {
-		case "pg":
-			dialect = new PostgresDialect({ pool: connection as PostgresPool });
-			break;
-		case "mysql":
-			dialect = new MysqlDialect({ pool: connection as MysqlPool });
-			break;
-		case "sqlite":
-			dialect = new SqliteDialect({ database: connection as SqliteDatabase });
-			break;
-	}
+	const dialect = createDialect(connection, provider);
 
 	const plugins = prefix
 		? [new CamelCasePlugin(), new TablePrefixPlugin(prefix)]

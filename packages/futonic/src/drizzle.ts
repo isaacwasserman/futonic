@@ -114,7 +114,7 @@ function scalarColumn(
 			case "json":
 				return d.json(name);
 			case "blob":
-				return d.customType({ dataType: () => "blob" })(name);
+				return d.customType({ dataType: () => "longblob" })(name);
 		}
 	}
 	switch (type) {
@@ -243,4 +243,52 @@ export function generateDrizzleSchema<
 	}
 
 	return result as InferDrizzleSchema<TSchema, D, TPrefix, TDrizzle>;
+}
+
+/** Physical name of the shared blob-storage table (see `createDatabaseStorage`). */
+export const STORAGE_TABLE_NAME = "futonic_storage_objects";
+
+/**
+ * Generates the Drizzle table backing the built-in DB storage provider. It is a
+ * single framework-owned table shared by every service that uses the DB store
+ * on a given database — rows are scoped by the `owner` column (the service id),
+ * with a composite primary key of `(owner, key)`. Add it to your migrations
+ * **once**, regardless of how many services declare storage.
+ */
+export function generateStorageDrizzleSchema<
+	D extends DrizzleDialect,
+	TDrizzle extends DrizzleBuilders,
+>(
+	dialect: D,
+	drizzle: TDrizzle,
+): { futonicStorageObjects: HostTable<D, TDrizzle> } {
+	const d = drizzle as AnyBuilders;
+	const constructTable = d[TABLE_CTOR[dialect]];
+	if (typeof constructTable !== "function") {
+		throw new Error(
+			`Injected drizzle module is missing "${TABLE_CTOR[dialect]}" for dialect "${dialect}"`,
+		);
+	}
+	// MySQL can't put a TEXT column in a primary key without a prefix length, so
+	// the key columns are bounded `varchar` (matching the runtime auto-create).
+	const keyColumn = (name: string): ColumnBuilder =>
+		dialect === "mysql"
+			? d.varchar(name, { length: 255 })
+			: scalarColumn(dialect, d, "string", name);
+	const columns = {
+		owner: keyColumn("owner").notNull(),
+		key: keyColumn("key").notNull(),
+		contentType: scalarColumn(dialect, d, "string", "content_type"),
+		size: scalarColumn(dialect, d, "integer", "size").notNull(),
+		data: scalarColumn(dialect, d, "blob", "data").notNull(),
+		createdAt: scalarColumn(dialect, d, "string", "created_at").notNull(),
+	};
+	const table = constructTable(
+		STORAGE_TABLE_NAME,
+		columns,
+		(t: Record<string, ColumnBuilder>) => [
+			d.primaryKey({ columns: [t.owner, t.key] }),
+		],
+	);
+	return { futonicStorageObjects: table };
 }

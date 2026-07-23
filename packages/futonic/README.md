@@ -50,8 +50,13 @@ export const ticketingDefinition = defineService({
   // Host-supplied config, validated once at construction (any Standard Schema).
   configSchema: type({ apiKey: "string" }),
 
-  // HTTP endpoints. `defineEndpoint` already carries the service middleware,
-  // so handlers read `ctx.context.serviceCtx` — typed `{ db, config, logger }`.
+  // Declare blob storage. Presence surfaces a typed `ctx.storage`; `constraints`
+  // narrows the framework's upload defaults for this service. Omit to opt out.
+  storage: { constraints: { maxSizeBytes: 5 * 1024 * 1024 } },
+
+  // HTTP endpoints. `defineEndpoint` already carries the service middleware, so
+  // handlers read `ctx.context.serviceCtx` — typed `{ db, config, logger }`,
+  // plus `storage` for services that declare it.
   endpoints: (defineEndpoint) => ({
     createTicket: defineEndpoint(
       "/tickets",
@@ -78,6 +83,19 @@ export const ticketingDefinition = defineService({
       const { db } = ctx.context.serviceCtx;
       return { items: await db.selectFrom("tickets").selectAll().execute() };
     }),
+    // `storage` methods return a `ServiceResult` (`{ data, error }`); keys are
+    // namespaced by service id, so `attachment` lands under `ticketing/`.
+    attachmentUploadUrl: defineEndpoint(
+      "/tickets/attachment-url",
+      { method: "POST", body: type({ contentType: "string" }) },
+      async (ctx) => {
+        const { storage } = ctx.context.serviceCtx;
+        return storage.generatePresignedUploadUrl({
+          key: "attachment",
+          contentType: ctx.body.contentType,
+        });
+      },
+    ),
   }),
 
   // Optional non-HTTP methods. Context-free at the call site; each receives
@@ -96,14 +114,20 @@ export const createTicketingService =
   createFutonicServiceConstructor(ticketingDefinition);
 ```
 
-The Drizzle schema depends only on the definition and dialect — not on runtime config or a connection — so derive it with `generateServiceDrizzleSchema` and export a wrapper that bakes in the definition, leaving hosts to pass just the dialect:
+The Drizzle schema depends only on the definition, dialect, and the host's drizzle-orm module — not on runtime config or a connection — so derive it with `generateServiceDrizzleSchema` and export a wrapper that bakes in the definition, leaving hosts to pass the dialect and their drizzle-orm dialect module (so the tables use the host's own drizzle-orm version):
 
 ```ts
 // @acme/ticketing/src/service.ts (continued)
-import { type DrizzleDialect, generateServiceDrizzleSchema } from "futonic";
+import {
+  type DrizzleBuilders,
+  type DrizzleDialect,
+  generateServiceDrizzleSchema,
+} from "futonic";
 
-export const ticketingDrizzleSchema = (dialect: DrizzleDialect) =>
-  generateServiceDrizzleSchema(ticketingDefinition, dialect);
+export const ticketingDrizzleSchema = (
+  dialect: DrizzleDialect,
+  drizzle: DrizzleBuilders,
+) => generateServiceDrizzleSchema(ticketingDefinition, dialect, drizzle);
 ```
 
 ### 2. Export the package
@@ -138,6 +162,14 @@ const ticketing = createTicketingService({
   config: { apiKey: process.env.TICKETING_KEY! },
   database: { connection: new Database("app.db"), provider: "sqlite" },
   // logger?: defaults to `console`, prefixed with the service id.
+  // storage?: only for services that declare it. Omit `provider` to use the
+  // built-in DB-backed store on the connection above; `signingKey`/`baseUrl`
+  // enable its presigned transfer route. Pass a cloud adapter as `provider`
+  // for production. `constraints` further narrows the service's upload limits.
+  storage: {
+    signingKey: process.env.STORAGE_SIGNING_KEY!,
+    baseUrl: "https://app.example.com/api/ticketing",
+  },
 });
 
 // HTTP entry point: createHandler({ basePath }).handle(request) => Promise<Response>
@@ -150,13 +182,14 @@ A constructed service exposes `createHandler`, `endpoints`, `router`, and `servi
 
 ### 2. Migrate
 
-`ticketingDrizzleSchema(dialect)` returns a Drizzle table set (keyed and SQL-named by the service id). Re-export its tables from the schema file your drizzle-kit config points at, and migrations run against the host database alongside your own tables:
+`ticketingDrizzleSchema(dialect, drizzle)` returns a Drizzle table set (keyed and SQL-named by the service id) built with the drizzle-orm dialect module you pass. Re-export its tables from the schema file your drizzle-kit config points at, and migrations run against the host database alongside your own tables:
 
 ```ts
 // schema.ts
+import * as sqliteCore from "drizzle-orm/sqlite-core";
 import { ticketingDrizzleSchema } from "@acme/ticketing";
 
-export const { ticketingTickets } = ticketingDrizzleSchema("sqlite");
+export const { ticketingTickets } = ticketingDrizzleSchema("sqlite", sqliteCore);
 ```
 
 Prefer another migration tool? A service only declares its tables in `dbSchema` — create the matching prefixed tables (`ticketing_tickets`) with whatever tooling you already use. Futonic doesn't impose one.
@@ -207,6 +240,37 @@ await ticketing.endpoints.createTicket({ body: { title: "x", summary: "y" } });
 await ticketing.serviceMethods.closeStaleTickets({ olderThanDays: 30 });
 ```
 
+### Store and serve files
+
+A service that declares `storage` gets a typed `ctx.storage` (a `StorageProvider`) with presigned upload/download URLs plus server-side `get`/`put`/`delete`/`head`/`list`. Every method returns a `ServiceResult<T, E>` (`success(data)` / `failure(code, message)`), and keys are automatically namespaced by service id, so services can't read each other's objects.
+
+The host chooses the backing at construction. With no `provider`, futonic uses a **DB-backed store** on the required database connection — fine for development and small objects, but not production. For production, pass a cloud adapter (S3/GCS/R2/…) as `provider`; it implements the same `StorageProvider` interface:
+
+```ts
+createTicketingService({
+  config,
+  database,
+  storage: { provider: myS3Adapter, constraints: { maxSizeBytes: 20 * 1024 * 1024 } },
+});
+```
+
+Upload constraints merge **futonic defaults ← service declaration ← host options**, and are enforced on `put` and baked into presigned uploads. The built-in store can't mint cloud URLs, so when given a `signingKey` + `baseUrl` it exposes a signed, expiring transfer route that `createHandler` mounts automatically — presigned URLs point back at the service itself. For tests, `createInMemoryStorage()` gives an ephemeral store (needs Node ≥ 22.5's `node:sqlite`).
+
+The DB-backed store persists to one framework-owned table, `futonic_storage_objects`, shared across services and scoped by an `owner` column (the service id). Provision it **once** via `generateStorageDrizzleSchema` — independent of `generateServiceDrizzleSchema`, and only needed if any service uses the DB store:
+
+```ts
+// schema.ts
+import * as sqliteCore from "drizzle-orm/sqlite-core";
+import { generateStorageDrizzleSchema } from "futonic/drizzle";
+
+export const { futonicStorageObjects } = generateStorageDrizzleSchema(
+  "sqlite",
+  sqliteCore,
+);
+```
+
+(It also auto-creates on first use, so it works without migrations in dev.)
+
 ### Return any web-standard response
 
 Endpoints aren't limited to JSON. Serve full HTML pages for embedded UIs, server-sent event streams for real-time updates, file downloads, redirects — whatever `Response` supports. Build an entire admin dashboard that lives inside the host app.
@@ -223,9 +287,9 @@ Futonic works with whatever database the host already runs — pass the driver c
 
 | Import | Exports you'll use | Browser-safe |
 | --- | --- | --- |
-| `futonic` | `createFutonicServiceConstructor`, `defineService`, `generateServiceDrizzleSchema`, and db-schema types | No |
+| `futonic` | `createFutonicServiceConstructor`, `defineService`, `generateServiceDrizzleSchema`, db-schema types, storage (`StorageProvider`, `createDatabaseStorage`, `createInMemoryStorage`) and result (`ServiceResult`, `success`, `failure`) helpers | No |
 | `futonic/client` | `createClient`, `ClientOptions` | Yes |
-| `futonic/drizzle` | `generateDrizzleSchema`, `DrizzleDialect`, and Drizzle types | No |
+| `futonic/drizzle` | `generateDrizzleSchema`, `generateStorageDrizzleSchema`, `DrizzleDialect`, and Drizzle types | No |
 
 ## License
 

@@ -36,6 +36,15 @@ import {
 	generateOpenApiDocument,
 	openApiReferenceHtml,
 } from "./openapi";
+import {
+	type StorageDeclaration,
+	type StorageProvider,
+	type UploadConstraints,
+	createDatabaseStorage,
+	resolveConstraints,
+	withConstraints,
+	withServiceKeyPrefix,
+} from "./storage";
 
 /** A minimal structured logger. `console` satisfies this shape. */
 export type Logger = {
@@ -59,25 +68,38 @@ function createDefaultLogger(id: string): Logger {
 // biome-ignore lint/complexity/noBannedTypes: `{}` intentionally allows an empty config
 export type ServiceConfig = Record<string, unknown> | {};
 
-/** The context handed to every endpoint and service method. */
-export type ServiceContext<TConfig, TDb> = {
+/**
+ * Resolves a service's declaration into the storage handle exposed on its
+ * context: `StorageProvider` when the service declares `storage`, else absent.
+ */
+export type StorageOf<TStorageDecl> = TStorageDecl extends StorageDeclaration
+	? StorageProvider
+	: undefined;
+
+/**
+ * The context handed to every endpoint and service method. `storage` is present
+ * only when the service declares it (see {@link StorageOf}).
+ */
+export type ServiceContext<TConfig, TDb, TStorage = undefined> = {
 	db: TDb;
 	config: TConfig;
 	logger: Logger;
-};
+} & (TStorage extends StorageProvider
+	? { storage: TStorage }
+	: Record<never, never>);
 
 /** The better-call middleware type that carries the service context. */
-export type ServiceMiddleware<TConfig, TDb> = Middleware<
+export type ServiceMiddleware<TConfig, TDb, TStorage = undefined> = Middleware<
 	// biome-ignore lint/suspicious/noExplicitAny: matches better-call's own middleware handler signature
 	(inputCtx: Record<string, any>) => Promise<{
-		serviceCtx: ServiceContext<TConfig, TDb>;
+		serviceCtx: ServiceContext<TConfig, TDb, TStorage>;
 	}>
 >;
 
 /** Builds the middleware instance that injects the resolved service context. */
-function createServiceMiddleware<TConfig, TDb>(
-	serviceCtx: ServiceContext<TConfig, TDb>,
-): ServiceMiddleware<TConfig, TDb> {
+function createServiceMiddleware<TConfig, TDb, TStorage>(
+	serviceCtx: ServiceContext<TConfig, TDb, TStorage>,
+): ServiceMiddleware<TConfig, TDb, TStorage> {
 	return createMiddleware(async () => ({ serviceCtx }));
 }
 
@@ -98,7 +120,7 @@ type InferEndpointResult<OutputSchema, R> =
  * must match (checked at compile time only) and which is emitted as the `200`
  * response schema in the OpenAPI document.
  */
-export type DefineEndpoint<TConfig, TDb> = <
+export type DefineEndpoint<TConfig, TDb, TStorage = undefined> = <
 	Path extends string,
 	Method extends HTTPMethod | HTTPMethod[] | "*",
 	BodySchema extends object | undefined = undefined,
@@ -141,10 +163,10 @@ export type DefineEndpoint<TConfig, TDb> = <
 			Method,
 			BodySchema,
 			QuerySchema,
-			[ServiceMiddleware<TConfig, TDb>],
+			[ServiceMiddleware<TConfig, TDb, TStorage>],
 			ReqHeaders,
 			ReqRequest,
-			{ serviceCtx: ServiceContext<TConfig, TDb> },
+			{ serviceCtx: ServiceContext<TConfig, TDb, TStorage> },
 			Meta
 		>,
 	) => Promise<InferEndpointResult<OutputSchema, R>>,
@@ -153,7 +175,7 @@ export type DefineEndpoint<TConfig, TDb> = <
 	Method,
 	ResolveBodyInput<BodySchema, Meta>,
 	ResolveQueryInput<QuerySchema, Meta>,
-	[ServiceMiddleware<TConfig, TDb>],
+	[ServiceMiddleware<TConfig, TDb, TStorage>],
 	Awaited<InferEndpointResult<OutputSchema, R>>,
 	ResolveMetaInput<Meta>,
 	ResolveErrorInput<ErrorSchema, Meta>
@@ -162,21 +184,31 @@ export type DefineEndpoint<TConfig, TDb> = <
 // --- Service methods ------------------------------------------------------
 
 /** A service method implementation, with access to the service context. */
-export type ServiceMethodImpl<TConfig, TDb, TInput, TOutput> = (
+export type ServiceMethodImpl<TConfig, TDb, TStorage, TInput, TOutput> = (
 	input: TInput,
-	ctx: ServiceContext<TConfig, TDb>,
+	ctx: ServiceContext<TConfig, TDb, TStorage>,
 ) => Promise<TOutput>;
 
-// biome-ignore lint/suspicious/noExplicitAny: constraint for any method impl
-export type AnyServiceMethodImpl = ServiceMethodImpl<any, any, any, any>;
+// The context carries `storage` so an impl requiring it stays assignable to
+// this constraint; impls that ignore storage are assignable too (extra prop).
+// biome-ignore lint/suspicious/noExplicitAny: broad context for the method constraint
+type AnyMethodContext = ServiceContext<any, any, StorageProvider>;
+
+export type AnyServiceMethodImpl = (
+	input: never,
+	ctx: AnyMethodContext,
+) => Promise<unknown>;
 
 /**
  * The helper passed to the `serviceMethods` factory. It's an identity function
  * at runtime, but as a generic it captures each method's input/output types.
  */
-export type ServiceMethodBuilder<TConfig, TDb> = <TInput, TOutput>(
-	impl: ServiceMethodImpl<TConfig, TDb, TInput, TOutput>,
-) => ServiceMethodImpl<TConfig, TDb, TInput, TOutput>;
+export type ServiceMethodBuilder<TConfig, TDb, TStorage = undefined> = <
+	TInput,
+	TOutput,
+>(
+	impl: ServiceMethodImpl<TConfig, TDb, TStorage, TInput, TOutput>,
+) => ServiceMethodImpl<TConfig, TDb, TStorage, TInput, TOutput>;
 
 /** Resolves an authored method impl to the context-free method on the service. */
 export type ResolveServiceMethods<
@@ -197,20 +229,29 @@ export type ServiceDefinition<
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
 	TServiceId extends string,
+	TStorageDecl extends StorageDeclaration | undefined = undefined,
 	TConfig = StandardSchemaV1.InferOutput<TConfigSchema>,
 > = {
 	id: TServiceId;
 	dbSchema: TDBSchema;
 	configSchema: TConfigSchema;
 	/**
+	 * Declare that this service uses blob storage. Its presence surfaces a typed
+	 * `ctx.storage` on endpoints and service methods; `constraints` narrows the
+	 * framework's default upload limits for this service.
+	 */
+	storage?: TStorageDecl;
+	/**
 	 * Define endpoints with the passed `defineEndpoint` helper — a `createEndpoint`
 	 * that already carries the service middleware, so handlers can read
-	 * `ctx.context.serviceCtx` (typed `{ db, config, logger }`).
+	 * `ctx.context.serviceCtx` (typed `{ db, config, logger }`, plus `storage`
+	 * when declared).
 	 */
 	endpoints: (
 		defineEndpoint: DefineEndpoint<
 			TConfig,
-			KyselyFromServiceDBSchema<TDBSchema>
+			KyselyFromServiceDBSchema<TDBSchema>,
+			StorageOf<TStorageDecl>
 		>,
 	) => TEndpoints;
 	/**
@@ -219,7 +260,11 @@ export type ServiceDefinition<
 	 * functions under `service.serviceMethods`.
 	 */
 	serviceMethods?: (
-		define: ServiceMethodBuilder<TConfig, KyselyFromServiceDBSchema<TDBSchema>>,
+		define: ServiceMethodBuilder<
+			TConfig,
+			KyselyFromServiceDBSchema<TDBSchema>,
+			StorageOf<TStorageDecl>
+		>,
 	) => TServiceMethods;
 };
 
@@ -234,10 +279,12 @@ export type ServiceBlueprint<
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
 	TServiceId extends string,
+	TStorageDecl extends StorageDeclaration | undefined = undefined,
 > = {
 	id: TServiceId;
 	dbSchema: TDBSchema;
 	configSchema: TConfigSchema;
+	storage?: TStorageDecl;
 	endpoints: (defineEndpoint: never) => TEndpoints;
 	serviceMethods?: (define: never) => TServiceMethods;
 };
@@ -325,6 +372,19 @@ export type FutonicService<
  * passes the matching re-typed endpoints here to surface that type end-to-end
  * without an `as`-cast at the call site — the runtime endpoints are identical.
  */
+/**
+ * Host-supplied storage wiring. Only consulted for services that declare
+ * `storage`. `provider` overrides the DB-backed default; `signingKey`/`baseUrl`
+ * configure that default's presigned transfer route; `constraints` further
+ * narrows the service's upload limits.
+ */
+export type StorageOptions = {
+	provider?: StorageProvider;
+	constraints?: Partial<UploadConstraints>;
+	signingKey?: string;
+	baseUrl?: string;
+};
+
 export type FutonicServiceConstructor<
 	TConfig,
 	TEndpoints extends Record<string, Endpoint>,
@@ -334,6 +394,7 @@ export type FutonicServiceConstructor<
 >(options: {
 	config: TConfig;
 	database: { connection: DatabaseConnection; provider: DatabaseProvider };
+	storage?: StorageOptions;
 	logger?: Logger;
 }) => FutonicService<TEndpointsOverride, TServiceMethods>;
 
@@ -354,20 +415,23 @@ export function defineService<
 		never
 	>,
 	TServiceId extends string = string,
+	const TStorageDecl extends StorageDeclaration | undefined = undefined,
 >(
 	definition: ServiceDefinition<
 		TDBSchema,
 		TConfigSchema,
 		TEndpoints,
 		TServiceMethods,
-		TServiceId
+		TServiceId,
+		TStorageDecl
 	>,
 ): ServiceBlueprint<
 	TDBSchema,
 	TConfigSchema,
 	TEndpoints,
 	TServiceMethods,
-	TServiceId
+	TServiceId,
+	TStorageDecl
 > {
 	return definition;
 }
@@ -384,6 +448,7 @@ export function createFutonicServiceConstructor<
 		never
 	>,
 	TServiceId extends string = string,
+	TStorageDecl extends StorageDeclaration | undefined = undefined,
 	TConfig = StandardSchemaV1.InferOutput<TConfigSchema>,
 >(
 	definition: ServiceBlueprint<
@@ -391,7 +456,8 @@ export function createFutonicServiceConstructor<
 		TConfigSchema,
 		TEndpoints,
 		TServiceMethods,
-		TServiceId
+		TServiceId,
+		TStorageDecl
 	>,
 ): FutonicServiceConstructor<TConfig, TEndpoints, TServiceMethods> {
 	validateDefinition(definition.id, definition.dbSchema);
@@ -403,6 +469,7 @@ export function createFutonicServiceConstructor<
 		TEndpoints,
 		TServiceMethods,
 		TServiceId,
+		TStorageDecl,
 		TConfig
 	>;
 
@@ -411,6 +478,7 @@ export function createFutonicServiceConstructor<
 	>(options: {
 		config: TConfig;
 		database: { connection: DatabaseConnection; provider: DatabaseProvider };
+		storage?: StorageOptions;
 		logger?: Logger;
 	}): FutonicService<TEndpointsOverride, TServiceMethods> => {
 		const { connection, provider } = options.database;
@@ -434,10 +502,38 @@ export function createFutonicServiceConstructor<
 
 		const db = createKysely<TDBSchema>(connection, provider, definition.id);
 		const logger = options.logger ?? createDefaultLogger(definition.id);
-		const serviceCtx: ServiceContext<
+
+		let storage: StorageProvider | undefined;
+		if (authored.storage) {
+			const baseProvider =
+				options.storage?.provider ??
+				createDatabaseStorage({
+					connection,
+					provider,
+					owner: definition.id,
+					signingKey: options.storage?.signingKey,
+					baseUrl: options.storage?.baseUrl,
+				});
+			const effective = resolveConstraints(
+				authored.storage.constraints,
+				options.storage?.constraints,
+			);
+			storage = withServiceKeyPrefix(
+				withConstraints(baseProvider, effective),
+				definition.id,
+			);
+		}
+
+		const serviceCtx = {
+			db,
+			config,
+			logger,
+			...(storage ? { storage } : {}),
+		} as ServiceContext<
 			TConfig,
-			KyselyFromServiceDBSchema<TDBSchema>
-		> = { db, config, logger };
+			KyselyFromServiceDBSchema<TDBSchema>,
+			StorageOf<TStorageDecl>
+		>;
 
 		const baseDefineEndpoint = createEndpoint.create({
 			use: [createServiceMiddleware(serviceCtx)],
@@ -459,14 +555,19 @@ export function createFutonicServiceConstructor<
 				: options;
 			// biome-ignore lint/suspicious/noExplicitAny: forwarding to better-call's generic factory
 			return (baseDefineEndpoint as any)(path, resolved, handler);
-		}) as DefineEndpoint<TConfig, KyselyFromServiceDBSchema<TDBSchema>>;
+		}) as DefineEndpoint<
+			TConfig,
+			KyselyFromServiceDBSchema<TDBSchema>,
+			StorageOf<TStorageDecl>
+		>;
 		const endpoints = authored.endpoints(defineEndpoint);
 		const router = createRouter(endpoints, { openapi: { disabled: true } });
 
 		const define = ((impl: AnyServiceMethodImpl) =>
-			impl) as ServiceMethodBuilder<
+			impl) as unknown as ServiceMethodBuilder<
 			TConfig,
-			KyselyFromServiceDBSchema<TDBSchema>
+			KyselyFromServiceDBSchema<TDBSchema>,
+			StorageOf<TStorageDecl>
 		>;
 		const methodImpls = (authored.serviceMethods?.(define) ?? {}) as Record<
 			string,
@@ -475,7 +576,11 @@ export function createFutonicServiceConstructor<
 		const serviceMethods = Object.fromEntries(
 			Object.entries(methodImpls).map(([name, impl]) => [
 				name,
-				(input: unknown) => impl(input, serviceCtx),
+				(input: unknown) =>
+					impl(
+						input as never,
+						serviceCtx as Parameters<AnyServiceMethodImpl>[1],
+					),
 			]),
 		) as ResolveServiceMethods<TServiceMethods>;
 
@@ -516,6 +621,20 @@ export function createFutonicServiceConstructor<
 							return new Response(html, {
 								headers: { "Content-Type": "text/html" },
 							});
+						},
+					) as unknown as Endpoint;
+				}
+
+				if (storage?.transferRoute) {
+					const { path, handle } = storage.transferRoute;
+					routeEndpoints.storageTransfer = createEndpoint(
+						path,
+						{ method: ["GET", "PUT", "POST"], disableBody: true },
+						async (ctx) => {
+							const request = (ctx as { request?: Request }).request;
+							return request
+								? handle(request)
+								: new Response("no request", { status: 400 });
 						},
 					) as unknown as Endpoint;
 				}

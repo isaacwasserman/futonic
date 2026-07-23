@@ -407,3 +407,115 @@ test("generates the prefixed drizzle schema from the definition and dialect", ()
 	);
 	expect(Object.keys(schema)).toContain("ticketingTickets");
 });
+
+test("storage is injected and defaults to the DB-backed store when declared", async () => {
+	const make = createFutonicServiceConstructor(
+		defineService({
+			id: "docs",
+			dbSchema,
+			configSchema: type({}),
+			storage: {},
+			endpoints: (defineEndpoint) => ({
+				save: defineEndpoint(
+					"/save",
+					{ method: "POST", body: type({ text: "string" }) },
+					async (ctx) => {
+						const result = await ctx.context.serviceCtx.storage.put({
+							key: "note",
+							body: new TextEncoder().encode(ctx.body.text),
+						});
+						return { error: result.error };
+					},
+				),
+				uploadUrl: defineEndpoint(
+					"/upload-url",
+					{ method: "POST" },
+					async (ctx) => {
+						const result =
+							await ctx.context.serviceCtx.storage.generatePresignedUploadUrl({
+								key: "note",
+							});
+						return { error: result.error };
+					},
+				),
+			}),
+			serviceMethods: (define) => ({
+				read: define(async (_input: Record<string, never>, { storage }) => {
+					const result = await storage.get({ key: "note" });
+					return {
+						text: result.data
+							? await new Response(result.data.body).text()
+							: null,
+					};
+				}),
+			}),
+		}),
+	);
+
+	const svc = make({
+		config: {},
+		database: { connection: createSqliteConnection(), provider: "sqlite" },
+	});
+
+	expect(await svc.endpoints.save({ body: { text: "hello" } })).toEqual({
+		error: null,
+	});
+	expect(await svc.serviceMethods.read({})).toEqual({ text: "hello" });
+	// Presign is unavailable on the default store without a signing key.
+	expect(await svc.endpoints.uploadUrl()).toEqual({ error: "UNSUPPORTED" });
+});
+
+test("presigned upload/download round-trips through the mounted transfer route", async () => {
+	const make = createFutonicServiceConstructor(
+		defineService({
+			id: "docs",
+			dbSchema,
+			configSchema: type({}),
+			storage: {},
+			endpoints: (defineEndpoint) => ({
+				uploadUrl: defineEndpoint("/upload-url", { method: "POST" }, (ctx) =>
+					ctx.context.serviceCtx.storage.generatePresignedUploadUrl({
+						key: "pic",
+						contentType: "image/png",
+					}),
+				),
+				downloadUrl: defineEndpoint(
+					"/download-url",
+					{ method: "POST" },
+					(ctx) =>
+						ctx.context.serviceCtx.storage.generatePresignedDownloadUrl({
+							key: "pic",
+						}),
+				),
+			}),
+		}),
+	);
+
+	const svc = make({
+		config: {},
+		database: { connection: createSqliteConnection(), provider: "sqlite" },
+		storage: { signingKey: "k", baseUrl: "http://x/api" },
+	});
+	const handler = svc.createHandler({ basePath: "/api" });
+
+	const upload = await svc.endpoints.uploadUrl();
+	if (upload.error) throw new Error(upload.error);
+	// image/png forces better-call's router to read the body; the transfer route
+	// must not depend on re-reading an already-consumed request.
+	const put = await handler.handle(
+		new Request(upload.data.url, {
+			method: "PUT",
+			headers: { "content-type": "image/png" },
+			body: new Uint8Array([1, 2, 3, 4]),
+		}),
+	);
+	expect(put.status).toBe(204);
+
+	const download = await svc.endpoints.downloadUrl();
+	if (download.error) throw new Error(download.error);
+	const get = await handler.handle(new Request(download.data.url));
+	expect(get.status).toBe(200);
+	expect(new Uint8Array(await get.arrayBuffer())).toEqual(
+		new Uint8Array([1, 2, 3, 4]),
+	);
+});
