@@ -30,6 +30,9 @@ const ticketingDefinition = defineService({
 	configSchema: type({
 		configVarA: "string",
 	}),
+	// Declaring `storage` surfaces a typed `ctx.storage`; `constraints` narrows
+	// the framework's upload defaults for this service.
+	storage: { constraints: { maxSizeBytes: 5 * 1024 * 1024 } },
 	endpoints: (defineEndpoint) => ({
 		createTicket: defineEndpoint(
 			"/tickets",
@@ -51,6 +54,18 @@ const ticketingDefinition = defineService({
 				return { id: ctx.body.title };
 			},
 		),
+		attachmentUploadUrl: defineEndpoint(
+			"/tickets/attachment-url",
+			{ method: "POST", body: type({ contentType: "string" }) },
+			async (ctx) => {
+				const { storage } = ctx.context.serviceCtx;
+				const result = await storage.generatePresignedUploadUrl({
+					key: "attachment",
+					contentType: ctx.body.contentType,
+				});
+				return result;
+			},
+		),
 	}),
 	// Non-HTTP methods, resolved to context-free functions on the service.
 	serviceMethods: (define) => ({
@@ -67,6 +82,21 @@ const ticketingDefinition = defineService({
 const createTicketingService =
 	createFutonicServiceConstructor(ticketingDefinition);
 
+// A service that does NOT declare storage must not expose `ctx.storage`.
+const plainDefinition = defineService({
+	id: "plain",
+	dbSchema: { tables: {} },
+	configSchema: type({}),
+	endpoints: (defineEndpoint) => ({
+		ping: defineEndpoint("/ping", { method: "GET" }, async (ctx) => {
+			// @ts-expect-error storage is absent on services that don't declare it.
+			void ctx.context.serviceCtx.storage;
+			return { ok: true };
+		}),
+	}),
+});
+void plainDefinition;
+
 // Wrap the generator so hosts build the tables by passing their own drizzle
 // dialect module — the tables come back as the host's drizzle-orm types.
 const ticketingDrizzleSchema = (
@@ -79,6 +109,12 @@ const ticketingDrizzleSchema = (
 const ticketingService = createTicketingService({
 	config: { configVarA: "something" },
 	database: { connection: new Database(":memory:"), provider: "sqlite" },
+	// No `provider` given, so futonic backs storage with the DB-backed default;
+	// `signingKey`/`baseUrl` enable its presigned transfer route.
+	storage: {
+		signingKey: "dev-signing-key",
+		baseUrl: "http://localhost/api/ticketing",
+	},
 });
 
 // Drizzle tables for migrations, keyed and SQL-named by the service id.

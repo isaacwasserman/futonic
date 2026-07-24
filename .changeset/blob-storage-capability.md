@@ -1,0 +1,5 @@
+---
+"futonic": minor
+---
+
+Add an optional blob-storage capability to services. Declaring `storage` on a service definition surfaces a typed `ctx.storage` (a `StorageProvider`) with presigned upload/download URLs and server-side `get`/`put`/`delete`/`head`/`list`, each returning a `ServiceResult`; keys are namespaced by service id and uploads enforce constraints merged as defaults ← service ← host (limits only ever narrow). A built-in DB-backed store persists to a shared, owner-scoped `futonic_storage_objects` table — provisioned via `generateStorageDrizzleSchema` (also auto-created on first use) — and, when given a `signingKey`/`baseUrl`, exposes an HMAC-signed transfer route that `createHandler` mounts so presigned URLs point back at the service. Hosts can pass a cloud adapter as `provider` instead, and `createInMemoryStorage` provides an ephemeral store for tests. New exports: `StorageProvider`, `createDatabaseStorage`, `createInMemoryStorage`, `ServiceResult`, `success`, `failure` from `futonic`, and `generateStorageDrizzleSchema` from `futonic/drizzle`.

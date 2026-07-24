@@ -16,6 +16,10 @@ Do NOT write:
 If a comment is removed and a future reader would still understand the code, the comment shouldn't have been there. If you come across existing comments that violate these rules while working in a file, ask the user whether they can be removed rather than silently deleting them or leaving them in place.
 
 ## README
-The root `README.md` is canonical. Its "Full walkthrough" section is the feature-complete guide to building an example service with the package; `packages/futonic/README.md` is generated from the root README at build time (copied by `scripts/build.ts` for npm) and is gitignored — never edit it directly. Whenever you add, remove, or change a public-facing feature (a package export, an entry point, the service-definition shape, the client, or codegen), update the root README in the same change so it stays accurate.
+Two hand-maintained, git-tracked READMEs (neither is generated; `scripts/build.ts` does not touch either):
+- `packages/futonic/README.md` is the canonical **full walkthrough** — the feature-complete guide to building an example service with the package, and the README published to npm. This is the one to edit for feature docs.
+- The root `README.md` is a high-level overview (the problem, the idea, the vertical-slice model) that links to the walkthrough. Edit it only when the conceptual overview changes.
+
+Whenever you add, remove, or change a public-facing feature (a package export, an entry point, the service-definition shape, the client, or codegen), update the walkthrough in `packages/futonic/README.md` in the same change so it stays accurate.
 
 Keep the walkthrough the simplest possible guide to a feature-complete example: one cohesive example service that exercises every feature, explained in the fewest words that still work end to end. Prefer runnable code over prose, cut anything a reader wouldn't need to get the example working, and don't let it drift into API reference or design rationale.

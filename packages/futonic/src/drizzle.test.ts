@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { getTableColumns, getTableName } from "drizzle-orm";
-import { generateDrizzleSchema } from "./drizzle";
+import { generateDrizzleSchema, generateStorageDrizzleSchema } from "./drizzle";
 import { drizzleFor } from "./test-helpers";
 
 const schema = {
@@ -97,4 +97,14 @@ test("generates for every dialect, including enums and references", () => {
 	expect(getTableName(pg.svcTickets)).toBe("svc_tickets");
 	expect(getTableName(mysql.svcTicketEvents)).toBe("svc_ticket_events");
 	expect(getTableName(sqlite.sqlitesvcTickets)).toBe("sqlitesvc_tickets");
+});
+
+test("generateStorageDrizzleSchema builds the shared owner-scoped storage table", () => {
+	const schema = generateStorageDrizzleSchema("sqlite", drizzleFor("sqlite"));
+	expect(getTableName(schema.futonicStorageObjects)).toBe(
+		"futonic_storage_objects",
+	);
+	expect(
+		Object.keys(getTableColumns(schema.futonicStorageObjects)).sort(),
+	).toEqual(["contentType", "createdAt", "data", "key", "owner", "size"]);
 });
