@@ -6,13 +6,18 @@
 
 import { createRequire } from "node:module";
 import { Kysely, sql } from "kysely";
-import { STORAGE_TABLE_NAME } from "./drizzle";
+import { STORAGE_TABLE_NAME } from "../drizzle";
 import {
 	type DatabaseConnection,
 	type DatabaseProvider,
 	createDialect,
-} from "./kysely";
-import { type ServiceResult, failure, success, unknownFailure } from "./result";
+} from "../kysely";
+import {
+	type ServiceResult,
+	failure,
+	success,
+	unknownFailure,
+} from "../result";
 
 export type StorageError =
 	| "NOT_FOUND"
@@ -86,6 +91,7 @@ export type StorageProvider = {
 	delete(input: { key: string }): Promise<
 		ServiceResult<undefined, StorageError>
 	>;
+	/** `cursor` is opaque: pass back the one a previous page returned. */
 	list(input: {
 		prefix?: string;
 		limit?: number;
@@ -159,7 +165,8 @@ function isKeySafe(key: string): boolean {
 /**
  * Namespaces every key/prefix with `${id}/` (isolation parity with the DB's
  * table prefixing) and rejects traversal keys. `list` results are un-prefixed
- * back to the service's logical key space.
+ * back to the service's logical key space; cursors pass through untouched, since
+ * a cloud store's pagination token isn't a key.
  */
 export function withServiceKeyPrefix(
 	store: StorageProvider,
@@ -201,17 +208,16 @@ export function withServiceKeyPrefix(
 				: Promise.resolve(denied()),
 		list: async (input) => {
 			if (input.prefix && !isKeySafe(input.prefix)) return denied();
-			const unscope = (k: string) =>
-				k.startsWith(scope) ? k.slice(scope.length) : k;
 			const result = await store.list({
 				...input,
 				prefix: `${scope}${input.prefix ?? ""}`,
-				cursor: input.cursor ? scoped(input.cursor) : undefined,
 			});
 			if (result.error) return result;
 			return success({
-				keys: result.data.keys.map(unscope),
-				cursor: result.data.cursor ? unscope(result.data.cursor) : undefined,
+				keys: result.data.keys.map((k) =>
+					k.startsWith(scope) ? k.slice(scope.length) : k,
+				),
+				cursor: result.data.cursor,
 			});
 		},
 	};
@@ -229,6 +235,35 @@ function contentTypeAllowed(allowed: string[], contentType?: string): boolean {
 	return (
 		allowed.length === 0 || (!!contentType && allowed.includes(contentType))
 	);
+}
+
+/**
+ * Caps a body without buffering it: bytes pass through until the limit is
+ * exceeded, at which point the stream errors and `exceeded()` reports why the
+ * transfer failed.
+ */
+function limitStreamSize(
+	body: ReadableStream,
+	maxSizeBytes: number,
+): { stream: ReadableStream; exceeded: () => boolean } {
+	let seen = 0;
+	let exceeded = false;
+	const stream = body.pipeThrough(
+		new TransformStream<Uint8Array, Uint8Array>({
+			transform(chunk, controller) {
+				seen += chunk.byteLength;
+				if (seen > maxSizeBytes) {
+					exceeded = true;
+					controller.error(
+						new Error(`object exceeds the limit of ${maxSizeBytes} bytes`),
+					);
+					return;
+				}
+				controller.enqueue(chunk);
+			},
+		}),
+	);
+	return { stream, exceeded: () => exceeded };
 }
 
 /**
@@ -275,14 +310,21 @@ export function withConstraints(
 					`content type ${input.contentType ?? "(none)"} is not allowed`,
 				);
 			}
-			const { bytes, size } = await bodyByteLength(input.body);
-			if (size > constraints.maxSizeBytes) {
-				return failure(
-					"TOO_LARGE",
-					`object is ${size} bytes, exceeds limit of ${constraints.maxSizeBytes}`,
+			const tooLarge = () =>
+				failure(
+					"TOO_LARGE" as const,
+					`object exceeds the limit of ${constraints.maxSizeBytes} bytes`,
 				);
+			if (input.body instanceof Uint8Array) {
+				return input.body.byteLength > constraints.maxSizeBytes
+					? tooLarge()
+					: store.put(input);
 			}
-			return store.put({ ...input, body: bytes });
+			// A streamed body is only measurable as it flows, so the cap aborts the
+			// transfer mid-flight and the overflow is reported in place of its error.
+			const limited = limitStreamSize(input.body, constraints.maxSizeBytes);
+			const result = await store.put({ ...input, body: limited.stream });
+			return result.error && limited.exceeded() ? tooLarge() : result;
 		},
 	};
 }
