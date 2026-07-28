@@ -22,12 +22,18 @@
     "./drizzle": {
       "import": "./dist/drizzle.js",
       "types": "./dist/drizzle.d.ts"
+    },
+    "./s3": {
+      "import": "./dist/storage/s3.js",
+      "types": "./dist/storage/s3.d.ts"
     }
   },
   "scripts": {
     "build": "bun run scripts/build.ts",
     "dev": "bun --watch src/index.ts",
     "test": "bun test",
+    "test:s3": "bun run scripts/s3-test-server.ts up && S3_TEST_ENDPOINT=http://127.0.0.1:3900 bun test src/storage/s3.integration.test.ts",
+    "s3:down": "bun run scripts/s3-test-server.ts down",
     "typecheck": "tsgo --noEmit",
     "lint": "biome check src/",
     "format": "biome format --write src/"
@@ -39,6 +45,10 @@
     "openapi-types": "^12.1.3"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1096.0",
+    "@aws-sdk/lib-storage": "^3.1096.0",
+    "@aws-sdk/s3-presigned-post": "^3.1096.0",
+    "@aws-sdk/s3-request-presigner": "^3.1096.0",
     "@biomejs/biome": "^1.9.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest",
@@ -53,11 +63,27 @@
     "zod": "^4.0.0"
   },
   "peerDependencies": {
+    "@aws-sdk/client-s3": ">=3.0.0",
+    "@aws-sdk/lib-storage": ">=3.0.0",
+    "@aws-sdk/s3-presigned-post": ">=3.0.0",
+    "@aws-sdk/s3-request-presigner": ">=3.0.0",
     "better-call": ">=2.0.0",
     "better-sqlite3": ">=9.0.0",
     "kysely": ">=0.29.0"
   },
   "peerDependenciesMeta": {
+    "@aws-sdk/client-s3": {
+      "optional": true
+    },
+    "@aws-sdk/lib-storage": {
+      "optional": true
+    },
+    "@aws-sdk/s3-presigned-post": {
+      "optional": true
+    },
+    "@aws-sdk/s3-request-presigner": {
+      "optional": true
+    },
     "drizzle-orm": {
       "optional": true
     },

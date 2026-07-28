@@ -244,17 +244,28 @@ await ticketing.serviceMethods.closeStaleTickets({ olderThanDays: 30 });
 
 A service that declares `storage` gets a typed `ctx.storage` (a `StorageProvider`) with presigned upload/download URLs plus server-side `get`/`put`/`delete`/`head`/`list`. Every method returns a `ServiceResult<T, E>` (`success(data)` / `failure(code, message)`), and keys are automatically namespaced by service id, so services can't read each other's objects.
 
-The host chooses the backing at construction. With no `provider`, futonic uses a **DB-backed store** on the required database connection — fine for development and small objects, but not production. For production, pass a cloud adapter (S3/GCS/R2/…) as `provider`; it implements the same `StorageProvider` interface:
+The host chooses the backing at construction. With no `provider`, futonic uses a **DB-backed store** on the required database connection — fine for development and small objects, but not production. For production, use the bundled S3 adapter (or any object of your own that implements `StorageProvider`):
 
 ```ts
+import { S3Client } from "@aws-sdk/client-s3";
+import { createS3Storage } from "futonic/s3";
+
 createTicketingService({
   config,
   database,
-  storage: { provider: myS3Adapter, constraints: { maxSizeBytes: 20 * 1024 * 1024 } },
+  storage: {
+    provider: createS3Storage({
+      bucket: "ticket-attachments",
+      client: new S3Client({ region: "us-east-1" }),
+    }),
+    constraints: { maxSizeBytes: 20 * 1024 * 1024 },
+  },
 });
 ```
 
-Upload constraints merge **futonic defaults ← service declaration ← host options**, and are enforced on `put` and baked into presigned uploads. The built-in store can't mint cloud URLs, so when given a `signingKey` + `baseUrl` it exposes a signed, expiring transfer route that `createHandler` mounts automatically — presigned URLs point back at the service itself. For tests, `createInMemoryStorage()` gives an ephemeral store (needs Node ≥ 22.5's `node:sqlite`).
+`futonic/s3` needs `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, `@aws-sdk/s3-request-presigner`, and `@aws-sdk/s3-presigned-post` installed (optional peers); `client` defaults to `new S3Client({})`, which reads the ambient AWS environment.
+
+Upload constraints merge **futonic defaults ← service declaration ← host options**, and are enforced on `put` and baked into presigned uploads. A `ReadableStream` body is never buffered whole — it streams to the store in parts, and a body that runs past `maxSizeBytes` aborts the transfer and comes back as `TOO_LARGE`. Because a signed `PUT` can't cap size, a presigned upload with a `maxSizeBytes` comes back as a `POST` form (`{ method: "POST", url, fields }`) whose policy carries the limit — post the fields plus the file (last) as `multipart/form-data`. The built-in store can't mint cloud URLs, so when given a `signingKey` + `baseUrl` it exposes a signed, expiring transfer route that `createHandler` mounts automatically — presigned URLs point back at the service itself. For tests, `createInMemoryStorage()` gives an ephemeral store (needs Node ≥ 22.5's `node:sqlite`).
 
 The DB-backed store persists to one framework-owned table, `futonic_storage_objects`, shared across services and scoped by an `owner` column (the service id). Provision it **once** via `generateStorageDrizzleSchema` — independent of `generateServiceDrizzleSchema`, and only needed if any service uses the DB store:
 
@@ -290,6 +301,7 @@ Futonic works with whatever database the host already runs — pass the driver c
 | `futonic` | `createFutonicServiceConstructor`, `defineService`, `generateServiceDrizzleSchema`, db-schema types, storage (`StorageProvider`, `createDatabaseStorage`, `createInMemoryStorage`) and result (`ServiceResult`, `success`, `failure`) helpers | No |
 | `futonic/client` | `createClient`, `ClientOptions` | Yes |
 | `futonic/drizzle` | `generateDrizzleSchema`, `generateStorageDrizzleSchema`, `DrizzleDialect`, and Drizzle types | No |
+| `futonic/s3` | `createS3Storage`, `S3StorageOptions` | No |
 
 ## License
 

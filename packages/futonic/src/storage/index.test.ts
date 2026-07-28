@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
+import { createSqliteConnection } from "../test-helpers";
 import {
 	type StorageProvider,
 	createDatabaseStorage,
 	resolveConstraints,
 	withConstraints,
 	withServiceKeyPrefix,
-} from "./storage";
-import { createSqliteConnection } from "./test-helpers";
+} from "./index";
 
 // The published `createInMemoryStorage` uses `node:sqlite`, which the Bun test
 // runtime lacks — so exercise the same `createDatabaseStorage` logic on a
@@ -154,6 +154,26 @@ test("withConstraints rejects oversized bodies and disallowed content types", as
 			})
 		).error,
 	).toBe("UNSUPPORTED_TYPE");
+});
+
+test("withConstraints caps a streamed body without buffering it", async () => {
+	const store = withConstraints(
+		createInMemoryStorage(),
+		resolveConstraints({ maxSizeBytes: 10 }),
+	);
+	let pulled = 0;
+	const body = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			pulled++;
+			if (pulled > 100) return controller.close();
+			controller.enqueue(bytes("x".repeat(8)));
+		},
+	});
+
+	expect((await store.put({ key: "big", body })).error).toBe("TOO_LARGE");
+	// Abandoned a few chunks past the limit rather than drained to the end.
+	expect(pulled).toBeLessThan(10);
+	expect((await store.get({ key: "big" })).data).toBeNull();
 });
 
 test("presign requires signingKey/baseUrl", async () => {
