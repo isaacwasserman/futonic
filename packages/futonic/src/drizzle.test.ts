@@ -99,12 +99,20 @@ test("generates for every dialect, including enums and references", () => {
 	expect(getTableName(sqlite.sqlitesvcTickets)).toBe("sqlitesvc_tickets");
 });
 
-test("generateStorageDrizzleSchema builds the shared owner-scoped storage table", () => {
-	const schema = generateStorageDrizzleSchema("sqlite", drizzleFor("sqlite"));
-	expect(getTableName(schema.futonicStorageObjects)).toBe(
-		"futonic_storage_objects",
+test("generateStorageDrizzleSchema builds a storage table per service", () => {
+	const schema = generateStorageDrizzleSchema(
+		"svc",
+		"sqlite",
+		drizzleFor("sqlite"),
+	);
+	expect(getTableName(schema.svcStorageObjects)).toBe("svc_storage_objects");
+	expect(Object.keys(getTableColumns(schema.svcStorageObjects)).sort()).toEqual(
+		["contentType", "createdAt", "data", "key", "size"],
 	);
 	expect(
-		Object.keys(getTableColumns(schema.futonicStorageObjects)).sort(),
-	).toEqual(["contentType", "createdAt", "data", "key", "owner", "size"]);
+		getTableName(
+			generateStorageDrizzleSchema("other", "sqlite", drizzleFor("sqlite"))
+				.otherStorageObjects,
+		),
+	).toBe("other_storage_objects");
 });

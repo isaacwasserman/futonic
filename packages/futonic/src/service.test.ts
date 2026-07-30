@@ -6,6 +6,7 @@ import {
 	defineService,
 	generateServiceDrizzleSchema,
 } from "./service";
+import { DEFAULT_MAX_UPLOAD_BYTES } from "./storage";
 import { createSqliteConnection, drizzleFor } from "./test-helpers";
 
 const dbSchema = {
@@ -408,61 +409,99 @@ test("generates the prefixed drizzle schema from the definition and dialect", ()
 	expect(Object.keys(schema)).toContain("ticketingTickets");
 });
 
+const storageService = defineService({
+	id: "docs",
+	dbSchema,
+	configSchema: type({}),
+	storage: { enabled: true },
+	endpoints: (defineEndpoint) => ({
+		save: defineEndpoint(
+			"/save",
+			{ method: "POST", body: type({ text: "string" }) },
+			async (ctx) => {
+				const { key } = await ctx.context.serviceCtx.storage.upload(
+					"note",
+					ctx.body.text,
+					{ contentType: "text/plain" },
+				);
+				return { key };
+			},
+		),
+	}),
+	serviceMethods: (define) => ({
+		read: define(async (_input: Record<string, never>, { storage }) =>
+			(await storage.download("note")).text(),
+		),
+		keys: define(async (_input: Record<string, never>, { storage }) =>
+			(await storage.list()).items.map((file) => file.key),
+		),
+	}),
+});
+
 test("storage is injected and defaults to the DB-backed store when declared", async () => {
+	const make = createFutonicServiceConstructor(storageService);
+	const svc = make({
+		config: {},
+		database: { connection: createSqliteConnection(), provider: "sqlite" },
+		storage: { signingKey: "k", baseUrl: "http://x/api" },
+	});
+
+	// The service's own key space: the `docs/` prefix is applied underneath.
+	expect(await svc.endpoints.save({ body: { text: "hello" } })).toEqual({
+		key: "note",
+	});
+	expect(await svc.serviceMethods.read({})).toBe("hello");
+	expect(await svc.serviceMethods.keys({})).toEqual(["note"]);
+});
+
+test("an uncapped presigned upload still gets a size ceiling, but no floor", async () => {
 	const make = createFutonicServiceConstructor(
 		defineService({
 			id: "docs",
 			dbSchema,
 			configSchema: type({}),
-			storage: {},
+			storage: { enabled: true },
 			endpoints: (defineEndpoint) => ({
-				save: defineEndpoint(
-					"/save",
-					{ method: "POST", body: type({ text: "string" }) },
-					async (ctx) => {
-						const result = await ctx.context.serviceCtx.storage.put({
-							key: "note",
-							body: new TextEncoder().encode(ctx.body.text),
-						});
-						return { error: result.error };
-					},
+				uploadUrl: defineEndpoint("/upload-url", { method: "POST" }, (ctx) =>
+					ctx.context.serviceCtx.storage.signedUploadUrl("pic", {
+						expiresIn: 60,
+					}),
 				),
-				uploadUrl: defineEndpoint(
-					"/upload-url",
-					{ method: "POST" },
-					async (ctx) => {
-						const result =
-							await ctx.context.serviceCtx.storage.generatePresignedUploadUrl({
-								key: "note",
-							});
-						return { error: result.error };
-					},
-				),
-			}),
-			serviceMethods: (define) => ({
-				read: define(async (_input: Record<string, never>, { storage }) => {
-					const result = await storage.get({ key: "note" });
-					return {
-						text: result.data
-							? await new Response(result.data.body).text()
-							: null,
-					};
-				}),
 			}),
 		}),
 	);
-
 	const svc = make({
 		config: {},
 		database: { connection: createSqliteConnection(), provider: "sqlite" },
+		storage: { signingKey: "k", baseUrl: "http://x/api" },
 	});
+	const handler = svc.createHandler({ basePath: "/api" });
 
-	expect(await svc.endpoints.save({ body: { text: "hello" } })).toEqual({
-		error: null,
-	});
-	expect(await svc.serviceMethods.read({})).toEqual({ text: "hello" });
-	// Presign is unavailable on the default store without a signing key.
-	expect(await svc.endpoints.uploadUrl()).toEqual({ error: "UNSUPPORTED" });
+	const upload = await svc.endpoints.uploadUrl();
+	if (upload.method !== "PUT") throw new Error("expected a PUT url");
+	const token = new URL(upload.url).searchParams.get("token") ?? "";
+	const payload = JSON.parse(atob(token.split(".")[0] ?? "")) as {
+		max?: number;
+		min?: number;
+	};
+	expect(payload.max).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+	expect(payload.min).toBe(0);
+
+	// No floor was asked for, so a zero-byte upload is still allowed.
+	const empty = await handler.handle(
+		new Request(upload.url, { method: "PUT", body: "" }),
+	);
+	expect(empty.status).toBe(204);
+});
+
+test("a store that cannot sign requires a signing key and base url", () => {
+	const make = createFutonicServiceConstructor(storageService);
+	expect(() =>
+		make({
+			config: {},
+			database: { connection: createSqliteConnection(), provider: "sqlite" },
+		}),
+	).toThrow(/cannot sign URLs/);
 });
 
 test("presigned upload/download round-trips through the mounted transfer route", async () => {
@@ -471,21 +510,19 @@ test("presigned upload/download round-trips through the mounted transfer route",
 			id: "docs",
 			dbSchema,
 			configSchema: type({}),
-			storage: {},
+			storage: { enabled: true },
 			endpoints: (defineEndpoint) => ({
 				uploadUrl: defineEndpoint("/upload-url", { method: "POST" }, (ctx) =>
-					ctx.context.serviceCtx.storage.generatePresignedUploadUrl({
-						key: "pic",
+					ctx.context.serviceCtx.storage.signedUploadUrl("pic", {
+						expiresIn: 60,
 						contentType: "image/png",
+						maxSize: 1024,
 					}),
 				),
 				downloadUrl: defineEndpoint(
 					"/download-url",
 					{ method: "POST" },
-					(ctx) =>
-						ctx.context.serviceCtx.storage.generatePresignedDownloadUrl({
-							key: "pic",
-						}),
+					(ctx) => ctx.context.serviceCtx.storage.url("pic", { expiresIn: 60 }),
 				),
 			}),
 		}),
@@ -499,11 +536,11 @@ test("presigned upload/download round-trips through the mounted transfer route",
 	const handler = svc.createHandler({ basePath: "/api" });
 
 	const upload = await svc.endpoints.uploadUrl();
-	if (upload.error) throw new Error(upload.error);
+	if (upload.method !== "PUT") throw new Error("expected a PUT url");
 	// image/png forces better-call's router to read the body; the transfer route
 	// must not depend on re-reading an already-consumed request.
 	const put = await handler.handle(
-		new Request(upload.data.url, {
+		new Request(upload.url, {
 			method: "PUT",
 			headers: { "content-type": "image/png" },
 			body: new Uint8Array([1, 2, 3, 4]),
@@ -511,11 +548,21 @@ test("presigned upload/download round-trips through the mounted transfer route",
 	);
 	expect(put.status).toBe(204);
 
-	const download = await svc.endpoints.downloadUrl();
-	if (download.error) throw new Error(download.error);
-	const get = await handler.handle(new Request(download.data.url));
+	const get = await handler.handle(
+		new Request(await svc.endpoints.downloadUrl()),
+	);
 	expect(get.status).toBe(200);
 	expect(new Uint8Array(await get.arrayBuffer())).toEqual(
 		new Uint8Array([1, 2, 3, 4]),
 	);
+
+	// The token carries the constraints the adapter can't sign into a policy.
+	const oversized = await handler.handle(
+		new Request(upload.url, {
+			method: "PUT",
+			headers: { "content-type": "image/png" },
+			body: new Uint8Array(2048),
+		}),
+	);
+	expect(oversized.status).toBe(413);
 });

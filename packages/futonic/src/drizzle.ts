@@ -245,23 +245,34 @@ export function generateDrizzleSchema<
 	return result as InferDrizzleSchema<TSchema, D, TPrefix, TDrizzle>;
 }
 
-/** Physical name of the shared blob-storage table (see `createDatabaseStorage`). */
-export const STORAGE_TABLE_NAME = "futonic_storage_objects";
+/** Physical name of a service's blob-storage table, prefixed like its other tables. */
+export function storageTableName(serviceId: string): string {
+	return `${serviceId}_storage_objects`;
+}
+
+/** Return of `generateStorageDrizzleSchema`, keyed like the service's other tables. */
+export type InferStorageDrizzleSchema<
+	TServiceId extends string,
+	D extends DrizzleDialect,
+	TDrizzle extends DrizzleBuilders,
+> = { [K in `${TServiceId}StorageObjects`]: HostTable<D, TDrizzle> };
 
 /**
- * Generates the Drizzle table backing the built-in DB storage provider. It is a
- * single framework-owned table shared by every service that uses the DB store
- * on a given database — rows are scoped by the `owner` column (the service id),
- * with a composite primary key of `(owner, key)`. Add it to your migrations
- * **once**, regardless of how many services declare storage.
+ * Generates the Drizzle table backing the built-in DB storage adapter — one per
+ * service, named `${serviceId}_storage_objects` to match the runtime's table
+ * scoping, so blobs are isolated by table rather than by a discriminator column.
+ * `generateServiceDrizzleSchema` includes it automatically for services that
+ * declare storage.
  */
 export function generateStorageDrizzleSchema<
+	TServiceId extends string,
 	D extends DrizzleDialect,
 	TDrizzle extends DrizzleBuilders,
 >(
+	serviceId: TServiceId,
 	dialect: D,
 	drizzle: TDrizzle,
-): { futonicStorageObjects: HostTable<D, TDrizzle> } {
+): InferStorageDrizzleSchema<TServiceId, D, TDrizzle> {
 	const d = drizzle as AnyBuilders;
 	const constructTable = d[TABLE_CTOR[dialect]];
 	if (typeof constructTable !== "function") {
@@ -270,25 +281,23 @@ export function generateStorageDrizzleSchema<
 		);
 	}
 	// MySQL can't put a TEXT column in a primary key without a prefix length, so
-	// the key columns are bounded `varchar` (matching the runtime auto-create).
-	const keyColumn = (name: string): ColumnBuilder =>
-		dialect === "mysql"
-			? d.varchar(name, { length: 255 })
-			: scalarColumn(dialect, d, "string", name);
+	// the key column is a bounded `varchar` (matching the runtime auto-create).
 	const columns = {
-		owner: keyColumn("owner").notNull(),
-		key: keyColumn("key").notNull(),
+		key: (dialect === "mysql"
+			? d.varchar("key", { length: 255 })
+			: scalarColumn(dialect, d, "string", "key")
+		)
+			.notNull()
+			.primaryKey(),
 		contentType: scalarColumn(dialect, d, "string", "content_type"),
 		size: scalarColumn(dialect, d, "integer", "size").notNull(),
 		data: scalarColumn(dialect, d, "blob", "data").notNull(),
 		createdAt: scalarColumn(dialect, d, "string", "created_at").notNull(),
 	};
-	const table = constructTable(
-		STORAGE_TABLE_NAME,
-		columns,
-		(t: Record<string, ColumnBuilder>) => [
-			d.primaryKey({ columns: [t.owner, t.key] }),
-		],
-	);
-	return { futonicStorageObjects: table };
+	return {
+		[`${serviceId}StorageObjects`]: constructTable(
+			storageTableName(serviceId),
+			columns,
+		),
+	} as InferStorageDrizzleSchema<TServiceId, D, TDrizzle>;
 }
