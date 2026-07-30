@@ -50,9 +50,9 @@ export const ticketingDefinition = defineService({
   // Host-supplied config, validated once at construction (any Standard Schema).
   configSchema: type({ apiKey: "string" }),
 
-  // Declare blob storage. Presence surfaces a typed `ctx.storage`; `constraints`
-  // narrows the framework's upload defaults for this service. Omit to opt out.
-  storage: { constraints: { maxSizeBytes: 5 * 1024 * 1024 } },
+  // Opt into blob storage. Surfaces a typed `ctx.storage`, scoped to this
+  // service's own key namespace. Defaults to off.
+  storage: { enabled: true },
 
   // HTTP endpoints. `defineEndpoint` already carries the service middleware, so
   // handlers read `ctx.context.serviceCtx` — typed `{ db, config, logger }`,
@@ -83,16 +83,17 @@ export const ticketingDefinition = defineService({
       const { db } = ctx.context.serviceCtx;
       return { items: await db.selectFrom("tickets").selectAll().execute() };
     }),
-    // `storage` methods return a `ServiceResult` (`{ data, error }`); keys are
-    // namespaced by service id, so `attachment` lands under `ticketing/`.
+    // `storage` is a files-sdk `Files` instance; keys are namespaced by service
+    // id, so `attachment` lands under `ticketing/`.
     attachmentUploadUrl: defineEndpoint(
       "/tickets/attachment-url",
       { method: "POST", body: type({ contentType: "string" }) },
       async (ctx) => {
         const { storage } = ctx.context.serviceCtx;
-        return storage.generatePresignedUploadUrl({
-          key: "attachment",
+        return storage.signedUploadUrl("attachment", {
+          expiresIn: 900,
           contentType: ctx.body.contentType,
+          maxSize: 5 * 1024 * 1024,
         });
       },
     ),
@@ -162,10 +163,9 @@ const ticketing = createTicketingService({
   config: { apiKey: process.env.TICKETING_KEY! },
   database: { connection: new Database("app.db"), provider: "sqlite" },
   // logger?: defaults to `console`, prefixed with the service id.
-  // storage?: only for services that declare it. Omit `provider` to use the
-  // built-in DB-backed store on the connection above; `signingKey`/`baseUrl`
-  // enable its presigned transfer route. Pass a cloud adapter as `provider`
-  // for production. `constraints` further narrows the service's upload limits.
+  // storage?: only for services that declare it. Omit `provider` to store blobs
+  // in the connection above. `signingKey`/`baseUrl` are required whenever the
+  // adapter can't sign its own URLs, which includes that default.
   storage: {
     signingKey: process.env.STORAGE_SIGNING_KEY!,
     baseUrl: "https://app.example.com/api/ticketing",
@@ -242,45 +242,41 @@ await ticketing.serviceMethods.closeStaleTickets({ olderThanDays: 30 });
 
 ### Store and serve files
 
-A service that declares `storage` gets a typed `ctx.storage` (a `StorageProvider`) with presigned upload/download URLs plus server-side `get`/`put`/`delete`/`head`/`list`. Every method returns a `ServiceResult<T, E>` (`success(data)` / `failure(code, message)`), and keys are automatically namespaced by service id, so services can't read each other's objects.
+A service that sets `storage: { enabled: true }` gets a typed `ctx.storage` — a [files-sdk](https://files-sdk.dev) `Files` instance scoped to that service, so `upload`, `download`, `head`, `exists`, `delete`, `copy`, `move`, `list`, `url`, and `signedUploadUrl` all work against keys namespaced by service id. Services can't read each other's objects, and methods throw a `FilesError` (with a `code` of `NotFound`, `Unauthorized`, `Conflict`, `ReadOnly`, or `Provider`) rather than returning an error value.
 
-The host chooses the backing at construction. With no `provider`, futonic uses a **DB-backed store** on the required database connection — fine for development and small objects, but not production. For production, use the bundled S3 adapter (or any object of your own that implements `StorageProvider`):
+The host chooses the backing at construction by passing any files-sdk adapter as `provider` — S3, R2, GCS, Azure, Supabase, the local filesystem, in-memory, and [40-odd more](https://files-sdk.dev/docs/providers):
 
 ```ts
-import { S3Client } from "@aws-sdk/client-s3";
-import { createS3Storage } from "futonic/s3";
+import { s3 } from "files-sdk/s3";
 
 createTicketingService({
   config,
   database,
   storage: {
-    provider: createS3Storage({
-      bucket: "ticket-attachments",
-      client: new S3Client({ region: "us-east-1" }),
-    }),
-    constraints: { maxSizeBytes: 20 * 1024 * 1024 },
+    provider: s3({ bucket: "ticket-attachments", region: "us-east-1" }),
   },
 });
 ```
 
-`futonic/s3` needs `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, `@aws-sdk/s3-request-presigner`, and `@aws-sdk/s3-presigned-post` installed (optional peers); `client` defaults to `new S3Client({})`, which reads the ambient AWS environment.
+Each adapter brings its own optional peer dependencies — `files-sdk/s3` needs the `@aws-sdk/*` packages, for instance. With **no** `provider`, futonic stores blobs in the database connection it already has, in a per-service `ticketing_storage_objects` table. That's for development and small objects; point a real adapter at production.
 
-Upload constraints merge **futonic defaults ← service declaration ← host options**, and are enforced on `put` and baked into presigned uploads. A `ReadableStream` body is never buffered whole — it streams to the store in parts, and a body that runs past `maxSizeBytes` aborts the transfer and comes back as `TOO_LARGE`. Because a signed `PUT` can't cap size, a presigned upload with a `maxSizeBytes` comes back as a `POST` form (`{ method: "POST", url, fields }`) whose policy carries the limit — post the fields plus the file (last) as `multipart/form-data`. The built-in store can't mint cloud URLs, so when given a `signingKey` + `baseUrl` it exposes a signed, expiring transfer route that `createHandler` mounts automatically — presigned URLs point back at the service itself. For tests, `createInMemoryStorage()` gives an ephemeral store (needs Node ≥ 22.5's `node:sqlite`).
+Adapters that can't mint their own URLs — the database default, the filesystem, in-memory — need a `signingKey` and a `baseUrl`, or construction throws. Given those, futonic mints HMAC-signed URLs itself and mounts a transfer route (`createHandler` wires it up automatically) that serves them through the adapter, so `url()` and `signedUploadUrl()` work the same on every backend.
 
-The DB-backed store persists to one framework-owned table, `futonic_storage_objects`, shared across services and scoped by an `owner` column (the service id). Provision it **once** via `generateStorageDrizzleSchema` — independent of `generateServiceDrizzleSchema`, and only needed if any service uses the DB store:
+Two behaviors worth knowing when you presign an upload:
+
+- **A size ceiling is always applied.** Omit `maxSize` and futonic fills in 5 GiB (S3's own per-object limit for a direct upload). An uncapped presign would otherwise fall back to a signed `PUT` that enforces no limit at all — and that files-sdk's S3 adapter currently signs with a checksum of the empty body, so no real upload to it can succeed.
+- **A cap turns the upload into a `POST` form** on providers that sign one (`{ method: "POST", url, fields }`) — post the fields plus the file **last** as `multipart/form-data`. files-sdk defaults `minSize` to `1`, so pass `minSize: 0` if you need to allow empty files; futonic does that for you when it injects the ceiling.
+
+The database store's table is created on first use, so it works with no migration at all. To put it in your migration history instead, it comes back from `generateServiceDrizzleSchema` alongside the service's own tables, for any service with storage enabled:
 
 ```ts
 // schema.ts
 import * as sqliteCore from "drizzle-orm/sqlite-core";
-import { generateStorageDrizzleSchema } from "futonic/drizzle";
+import { ticketingDrizzleSchema } from "@acme/ticketing";
 
-export const { futonicStorageObjects } = generateStorageDrizzleSchema(
-  "sqlite",
-  sqliteCore,
-);
+export const { ticketingTickets, ticketingStorageObjects } =
+  ticketingDrizzleSchema("sqlite", sqliteCore);
 ```
-
-(It also auto-creates on first use, so it works without migrations in dev.)
 
 ### Return any web-standard response
 
@@ -298,10 +294,9 @@ Futonic works with whatever database the host already runs — pass the driver c
 
 | Import | Exports you'll use | Browser-safe |
 | --- | --- | --- |
-| `futonic` | `createFutonicServiceConstructor`, `defineService`, `generateServiceDrizzleSchema`, db-schema types, storage (`StorageProvider`, `createDatabaseStorage`, `createInMemoryStorage`) and result (`ServiceResult`, `success`, `failure`) helpers | No |
+| `futonic` | `createFutonicServiceConstructor`, `defineService`, `generateServiceDrizzleSchema`, db-schema types, and storage types (`FutonicStorage`, `FutonicStorageAdapter`) | No |
 | `futonic/client` | `createClient`, `ClientOptions` | Yes |
-| `futonic/drizzle` | `generateDrizzleSchema`, `generateStorageDrizzleSchema`, `DrizzleDialect`, and Drizzle types | No |
-| `futonic/s3` | `createS3Storage`, `S3StorageOptions` | No |
+| `futonic/drizzle` | `generateDrizzleSchema`, `generateStorageDrizzleSchema`, `storageTableName`, `DrizzleDialect`, and Drizzle types | No |
 
 ## License
 

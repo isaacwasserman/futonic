@@ -17,12 +17,16 @@ import {
 	createMiddleware,
 	createRouter,
 } from "better-call";
+import { Files } from "files-sdk";
 import type { ServiceDBSchema } from "./db-schema";
 import {
 	type DrizzleBuilders,
 	type DrizzleDialect,
 	type InferDrizzleSchema,
+	type InferStorageDrizzleSchema,
 	generateDrizzleSchema,
+	generateStorageDrizzleSchema,
+	storageTableName,
 } from "./drizzle";
 import {
 	type DatabaseConnection,
@@ -37,14 +41,15 @@ import {
 	openApiReferenceHtml,
 } from "./openapi";
 import {
-	type StorageDeclaration,
-	type StorageProvider,
-	type UploadConstraints,
-	createDatabaseStorage,
-	resolveConstraints,
-	withConstraints,
-	withServiceKeyPrefix,
+	type FutonicStorage,
+	type FutonicStorageAdapter,
+	type FutonicStorageOptions,
+	type ShimmedAdapter,
+	type TransferRoute,
+	shimSignedUrls,
+	withUploadSizeCeiling,
 } from "./storage";
+import { databaseAdapter } from "./storage/db-adapter";
 
 /** A minimal structured logger. `console` satisfies this shape. */
 export type Logger = {
@@ -70,21 +75,21 @@ export type ServiceConfig = Record<string, unknown> | {};
 
 /**
  * Resolves a service's declaration into the storage handle exposed on its
- * context: `StorageProvider` when the service declares `storage`, else absent.
+ * context: a key-scoped `Files` when the service enables storage, else absent.
  */
-export type StorageOf<TStorageDecl> = TStorageDecl extends StorageDeclaration
-	? StorageProvider
+export type StorageOf<TStorageDecl> = TStorageDecl extends { enabled: true }
+	? FutonicStorage
 	: undefined;
 
 /**
  * The context handed to every endpoint and service method. `storage` is present
- * only when the service declares it (see {@link StorageOf}).
+ * only when the service enables it (see {@link StorageOf}).
  */
 export type ServiceContext<TConfig, TDb, TStorage = undefined> = {
 	db: TDb;
 	config: TConfig;
 	logger: Logger;
-} & (TStorage extends StorageProvider
+} & (TStorage extends FutonicStorage
 	? { storage: TStorage }
 	: Record<never, never>);
 
@@ -192,7 +197,7 @@ export type ServiceMethodImpl<TConfig, TDb, TStorage, TInput, TOutput> = (
 // The context carries `storage` so an impl requiring it stays assignable to
 // this constraint; impls that ignore storage are assignable too (extra prop).
 // biome-ignore lint/suspicious/noExplicitAny: broad context for the method constraint
-type AnyMethodContext = ServiceContext<any, any, StorageProvider>;
+type AnyMethodContext = ServiceContext<any, any, FutonicStorage>;
 
 export type AnyServiceMethodImpl = (
 	input: never,
@@ -229,16 +234,16 @@ export type ServiceDefinition<
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
 	TServiceId extends string,
-	TStorageDecl extends StorageDeclaration | undefined = undefined,
+	TStorageDecl extends FutonicStorageOptions | undefined = { enabled: false },
 	TConfig = StandardSchemaV1.InferOutput<TConfigSchema>,
 > = {
 	id: TServiceId;
 	dbSchema: TDBSchema;
 	configSchema: TConfigSchema;
 	/**
-	 * Declare that this service uses blob storage. Its presence surfaces a typed
-	 * `ctx.storage` on endpoints and service methods; `constraints` narrows the
-	 * framework's default upload limits for this service.
+	 * Opt into blob storage with `{ enabled: true }`, which surfaces a typed
+	 * `ctx.storage` on endpoints and service methods, scoped to this service's
+	 * key namespace. Defaults to off.
 	 */
 	storage?: TStorageDecl;
 	/**
@@ -279,7 +284,7 @@ export type ServiceBlueprint<
 	TEndpoints extends Record<string, Endpoint>,
 	TServiceMethods extends Record<string, AnyServiceMethodImpl>,
 	TServiceId extends string,
-	TStorageDecl extends StorageDeclaration | undefined = undefined,
+	TStorageDecl extends FutonicStorageOptions | undefined = { enabled: false },
 > = {
 	id: TServiceId;
 	dbSchema: TDBSchema;
@@ -374,13 +379,12 @@ export type FutonicService<
  */
 /**
  * Host-supplied storage wiring. Only consulted for services that declare
- * `storage`. `provider` overrides the DB-backed default; `signingKey`/`baseUrl`
- * configure that default's presigned transfer route; `constraints` further
- * narrows the service's upload limits.
+ * `storage`. `provider` overrides the DB-backed default adapter;
+ * `signingKey`/`baseUrl` are required when that adapter can't sign its own URLs,
+ * and let futonic presign against a transfer route it mounts instead.
  */
 export type StorageOptions = {
-	provider?: StorageProvider;
-	constraints?: Partial<UploadConstraints>;
+	provider?: FutonicStorageAdapter;
 	signingKey?: string;
 	baseUrl?: string;
 };
@@ -415,7 +419,9 @@ export function defineService<
 		never
 	>,
 	TServiceId extends string = string,
-	const TStorageDecl extends StorageDeclaration | undefined = undefined,
+	const TStorageDecl extends FutonicStorageOptions | undefined = {
+		enabled: false;
+	},
 >(
 	definition: ServiceDefinition<
 		TDBSchema,
@@ -448,7 +454,7 @@ export function createFutonicServiceConstructor<
 		never
 	>,
 	TServiceId extends string = string,
-	TStorageDecl extends StorageDeclaration | undefined = undefined,
+	TStorageDecl extends FutonicStorageOptions | undefined = { enabled: false },
 	TConfig = StandardSchemaV1.InferOutput<TConfigSchema>,
 >(
 	definition: ServiceBlueprint<
@@ -503,25 +509,35 @@ export function createFutonicServiceConstructor<
 		const db = createKysely<TDBSchema>(connection, provider, definition.id);
 		const logger = options.logger ?? createDefaultLogger(definition.id);
 
-		let storage: StorageProvider | undefined;
-		if (authored.storage) {
-			const baseProvider =
+		let storage: FutonicStorage | undefined;
+		let transferRoute: TransferRoute | undefined;
+		if (authored.storage?.enabled) {
+			const base =
 				options.storage?.provider ??
-				createDatabaseStorage({
+				databaseAdapter({
 					connection,
 					provider,
-					owner: definition.id,
-					signingKey: options.storage?.signingKey,
-					baseUrl: options.storage?.baseUrl,
+					table: storageTableName(definition.id),
 				});
-			const effective = resolveConstraints(
-				authored.storage.constraints,
-				options.storage?.constraints,
-			);
-			storage = withServiceKeyPrefix(
-				withConstraints(baseProvider, effective),
-				definition.id,
-			);
+			const { signingKey, baseUrl } = options.storage ?? {};
+			// An adapter that can't sign presigns against a route futonic hosts, which
+			// it can only point at once the host says where the service is reachable.
+			if (!base.signedUrl?.supported && !(signingKey && baseUrl)) {
+				throw new Error(
+					`Service "${definition.id}" uses a storage adapter that cannot sign URLs (${base.name}); set storage.signingKey and storage.baseUrl so futonic can presign against its own transfer route`,
+				);
+			}
+			const shimmed: ShimmedAdapter =
+				signingKey && baseUrl
+					? shimSignedUrls(base, { signingKey, baseUrl })
+					: { adapter: base };
+			transferRoute = shimmed.transferRoute;
+			// The prefix namespaces this service's keys; the transfer route bypasses
+			// it deliberately, since the tokens it verifies already carry prefixed keys.
+			storage = new Files({
+				adapter: withUploadSizeCeiling(shimmed.adapter),
+				prefix: definition.id,
+			});
 		}
 
 		const serviceCtx = {
@@ -625,15 +641,15 @@ export function createFutonicServiceConstructor<
 					) as unknown as Endpoint;
 				}
 
-				if (storage?.transferRoute) {
-					const { path, handle } = storage.transferRoute;
+				if (transferRoute) {
+					const { path, handler } = transferRoute;
 					routeEndpoints.storageTransfer = createEndpoint(
 						path,
 						{ method: ["GET", "PUT", "POST"], disableBody: true },
 						async (ctx) => {
 							const request = (ctx as { request?: Request }).request;
 							return request
-								? handle(request)
+								? handler(request)
 								: new Response("no request", { status: 400 });
 						},
 					) as unknown as Endpoint;
@@ -664,22 +680,46 @@ export function createFutonicServiceConstructor<
  * can wrap this and bake in their own definition so callers pass only a dialect;
  * host applications then create the service's tables in Drizzle from the dialect.
  */
+/** The storage table a service contributes, present only when it declares storage. */
+type StorageSchemaOf<
+	TStorageDecl,
+	TServiceId extends string,
+	D extends DrizzleDialect,
+	TDrizzle extends DrizzleBuilders,
+> = TStorageDecl extends { enabled: true }
+	? InferStorageDrizzleSchema<TServiceId, D, TDrizzle>
+	: Record<never, never>;
+
 export function generateServiceDrizzleSchema<
 	const TDBSchema extends ServiceDBSchema,
 	TServiceId extends string,
 	D extends DrizzleDialect,
 	TDrizzle extends DrizzleBuilders,
+	TStorageDecl extends FutonicStorageOptions | undefined = { enabled: false },
 >(
-	definition: { id: TServiceId; dbSchema: TDBSchema },
+	definition: { id: TServiceId; dbSchema: TDBSchema; storage?: TStorageDecl },
 	dialect: D,
 	drizzle: TDrizzle,
-): InferDrizzleSchema<TDBSchema, D, TServiceId, TDrizzle> {
-	return generateDrizzleSchema({
+): InferDrizzleSchema<TDBSchema, D, TServiceId, TDrizzle> &
+	StorageSchemaOf<TStorageDecl, TServiceId, D, TDrizzle> {
+	const tables = generateDrizzleSchema({
 		serviceSchema: definition.dbSchema,
 		dialect,
 		prefix: definition.id,
 		drizzle,
 	});
+	// The storage table only exists for services that enable storage, and is
+	// per-service, so a host can export every service's schema side by side.
+	const storage = definition.storage?.enabled
+		? generateStorageDrizzleSchema(definition.id, dialect, drizzle)
+		: {};
+	return { ...tables, ...storage } as InferDrizzleSchema<
+		TDBSchema,
+		D,
+		TServiceId,
+		TDrizzle
+	> &
+		StorageSchemaOf<TStorageDecl, TServiceId, D, TDrizzle>;
 }
 
 /** Re-export better-call's typesafe client for consumers. */

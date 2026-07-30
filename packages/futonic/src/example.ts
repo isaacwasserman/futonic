@@ -30,9 +30,9 @@ const ticketingDefinition = defineService({
 	configSchema: type({
 		configVarA: "string",
 	}),
-	// Declaring `storage` surfaces a typed `ctx.storage`; `constraints` narrows
-	// the framework's upload defaults for this service.
-	storage: { constraints: { maxSizeBytes: 5 * 1024 * 1024 } },
+	// Declaring `storage` surfaces a typed `ctx.storage`, scoped to this
+	// service's key namespace.
+	storage: { enabled: true },
 	endpoints: (defineEndpoint) => ({
 		createTicket: defineEndpoint(
 			"/tickets",
@@ -59,11 +59,13 @@ const ticketingDefinition = defineService({
 			{ method: "POST", body: type({ contentType: "string" }) },
 			async (ctx) => {
 				const { storage } = ctx.context.serviceCtx;
-				const result = await storage.generatePresignedUploadUrl({
-					key: "attachment",
+				// A cap makes this a POST form on providers that sign one, and is
+				// enforced by futonic's transfer route on those that don't.
+				return storage.signedUploadUrl("attachment", {
+					expiresIn: 900,
 					contentType: ctx.body.contentType,
+					maxSize: 5 * 1024 * 1024,
 				});
-				return result;
 			},
 		),
 	}),
@@ -110,7 +112,8 @@ const ticketingService = createTicketingService({
 	config: { configVarA: "something" },
 	database: { connection: new Database(":memory:"), provider: "sqlite" },
 	// No `provider` given, so futonic backs storage with the DB-backed default;
-	// `signingKey`/`baseUrl` enable its presigned transfer route.
+	// it can't sign URLs, so `signingKey`/`baseUrl` are required and presigned
+	// URLs point back at the service's own transfer route.
 	storage: {
 		signingKey: "dev-signing-key",
 		baseUrl: "http://localhost/api/ticketing",

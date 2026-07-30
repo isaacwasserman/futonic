@@ -22,10 +22,6 @@
     "./drizzle": {
       "import": "./dist/drizzle.js",
       "types": "./dist/drizzle.d.ts"
-    },
-    "./s3": {
-      "import": "./dist/storage/s3.js",
-      "types": "./dist/storage/s3.d.ts"
     }
   },
   "scripts": {
@@ -42,6 +38,7 @@
     "@better-fetch/fetch": "^1.3.1",
     "@standard-community/standard-json": "^0.3.5",
     "@standard-schema/spec": "^1.1.0",
+    "files-sdk": "^2.2.1",
     "openapi-types": "^12.1.3"
   },
   "devDependencies": {
@@ -63,27 +60,11 @@
     "zod": "^4.0.0"
   },
   "peerDependencies": {
-    "@aws-sdk/client-s3": ">=3.0.0",
-    "@aws-sdk/lib-storage": ">=3.0.0",
-    "@aws-sdk/s3-presigned-post": ">=3.0.0",
-    "@aws-sdk/s3-request-presigner": ">=3.0.0",
     "better-call": ">=2.0.0",
     "better-sqlite3": ">=9.0.0",
     "kysely": ">=0.29.0"
   },
   "peerDependenciesMeta": {
-    "@aws-sdk/client-s3": {
-      "optional": true
-    },
-    "@aws-sdk/lib-storage": {
-      "optional": true
-    },
-    "@aws-sdk/s3-presigned-post": {
-      "optional": true
-    },
-    "@aws-sdk/s3-request-presigner": {
-      "optional": true
-    },
     "drizzle-orm": {
       "optional": true
     },
