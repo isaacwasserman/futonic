@@ -1,5 +1,30 @@
 # futonic
 
+## 0.3.0
+
+### Minor Changes
+
+- b0fd21f: **Breaking:** storage is now built on [files-sdk](https://files-sdk.dev) instead of futonic's own `StorageProvider` interface. `ctx.storage` is a `Files` instance scoped to the service, so a host can back storage with any of files-sdk's 40-plus adapters instead of only the two futonic shipped.
+
+  Migrating:
+
+  - `ctx.storage` methods are files-sdk's and **throw a `FilesError`** instead of returning a `ServiceResult`. `put`/`get` become `upload`/`download`, `generatePresignedUploadUrl`/`generatePresignedDownloadUrl` become `signedUploadUrl`/`url`, and `copy`, `move`, `exists`, and `listAll` come along for free. A `download`/`head` of a missing key now throws `FilesError` with `code: "NotFound"` rather than resolving to `null`.
+  - `storage.provider` takes a files-sdk adapter. `createS3Storage` and the `futonic/s3` entry point are removed — use `s3({ bucket, region })` from `files-sdk/s3`, which also drops futonic's four `@aws-sdk` optional peer dependencies. A host-supplied `S3Client` is no longer expressible; configure the adapter instead.
+  - A service now opts in with `storage: { enabled: true }` rather than by declaring an options object; omitting it, or `{ enabled: false }`, leaves `ctx.storage` off. `storage.constraints` and the service declaration's `constraints` are removed, along with `UploadConstraints`, `resolveConstraints`, and `DEFAULT_UPLOAD_CONSTRAINTS`. Pass `maxSize`/`minSize`/`contentType` per call to `signedUploadUrl`, which is where a provider can actually enforce them.
+  - `signingKey` and `baseUrl` are now **required** whenever the adapter can't sign its own URLs (the database default, the filesystem, in-memory); constructing the service throws otherwise. Given them, futonic mints HMAC-signed URLs and mounts a transfer route that serves them through the adapter, so `url()`/`signedUploadUrl()` behave the same on every backend.
+  - The DB store is now a files-sdk adapter over a **per-service** table (`ticketing_storage_objects`) with `key` as its sole primary key, replacing the shared, `owner`-scoped `futonic_storage_objects`. Existing rows need migrating. `generateStorageDrizzleSchema` now takes a service id, and `generateServiceDrizzleSchema` returns the storage table alongside the service's own tables for any service that declares storage — so hosts no longer call it separately. `createDatabaseStorage` and `createInMemoryStorage` are gone; use `databaseAdapter` or files-sdk's `memory()`/`fs()` adapters.
+  - Presigned uploads always carry a size ceiling, defaulting to 5 GiB (S3's own per-object limit) with `minSize: 0`. An uncapped presign would otherwise fall back to a signed `PUT` that enforces no limit.
+
+  `bun run test:s3` runs the storage suite against a real S3 implementation (a throwaway Garage container), covering the streaming, capped-upload, and presigned paths that a mocked client can't.
+
+- fc39df0: Add a ready-made S3 storage provider at `futonic/s3`: `createS3Storage({ bucket, client })` takes a bucket and an AWS SDK `S3Client` (defaulting to `new S3Client({})`) and implements the full `StorageProvider` interface. Presigned downloads and uncapped uploads are signed URLs; a capped upload returns a POST form whose policy carries a `content-length-range`, so the framework's `maxSizeBytes` is enforced at the edge. The AWS SDK packages (`@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`, `@aws-sdk/s3-presigned-post`) are optional peer dependencies, needed only by hosts that import `futonic/s3`.
+
+  Server-side `put` no longer buffers a `ReadableStream` body to measure it: constraint enforcement counts bytes as they flow and errors the stream once `maxSizeBytes` is passed (still reported as `TOO_LARGE`), and the S3 provider uploads streams in parts via `@aws-sdk/lib-storage` so memory stays bounded by the part size instead of the object size.
+
+  Presigned `PUT` URLs drop the AWS SDK's default flexible checksum, which would otherwise hoist a checksum of the (absent) request body into the URL and make every real upload fail with `InvalidDigest`.
+
+  List cursors are now opaque: the per-service key-prefix wrapper passes them through untouched instead of prefixing them, which would corrupt a cloud store's pagination token.
+
 ## 0.2.0
 
 ### Minor Changes
